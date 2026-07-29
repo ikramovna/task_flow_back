@@ -224,6 +224,8 @@ class TimeEntry(TimeStampedModel):
 
     @property
     def minutes(self):
+        if not self.started_at or not self.ended_at:
+            return 0
         return max(0, round((self.ended_at - self.started_at).total_seconds() / 60))
 
 

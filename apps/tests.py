@@ -9,7 +9,7 @@ from django.utils.http import urlsafe_base64_encode
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from .models import Conversation, ConversationParticipant, Membership, Project, Report, Task, User, Workspace
+from .models import Conversation, ConversationParticipant, Membership, Project, Report, Task, TimeEntry, User, Workspace
 
 
 class TaskFlowAPITests(APITestCase):
@@ -96,6 +96,10 @@ class TaskFlowAPITests(APITestCase):
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_unsaved_time_entry_has_zero_minutes(self):
+        entry = TimeEntry()
+        self.assertEqual(entry.minutes, 0)
 
     def test_messages_are_visible_only_to_participants(self):
         conversation = Conversation.objects.create(workspace=self.workspace)

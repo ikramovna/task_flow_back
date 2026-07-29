@@ -172,6 +172,40 @@ a {
     background: var(--tf-primary-soft);
 }
 
+/* Keep changelist counters and pagination away from the card edges. */
+#changelist > .row:last-child {
+    min-height: 58px;
+    margin: 0;
+    padding: 16px 18px;
+    align-items: center;
+    border-top: 1px solid var(--tf-border);
+}
+
+#changelist .dataTables_info {
+    padding: 0;
+    color: var(--tf-muted);
+    line-height: 1.5;
+    white-space: nowrap;
+}
+
+#changelist .pagination {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+#changelist .actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+#changelist .actions .action-counter {
+    margin: 0 4px 0 0;
+    white-space: nowrap;
+}
+
 .form-control,
 .select2-container--default .select2-selection--single,
 .select2-container--default .select2-selection--multiple,
@@ -206,9 +240,7 @@ a {
 }
 
 .main-footer {
-    background: var(--tf-surface);
-    border-color: var(--tf-border);
-    color: var(--tf-muted);
+    display: none !important;
 }
 
 #taskflow-theme-toggle {
@@ -269,5 +301,20 @@ body.taskflow-dark select {
 @media (max-width: 767px) {
     .main-header form.form-inline {
         display: none;
+    }
+
+    #changelist > .row:last-child {
+        gap: 10px;
+        padding: 14px;
+    }
+
+    #changelist > .row:last-child > [class*="col-"] {
+        flex: 0 0 100%;
+        max-width: 100%;
+    }
+
+    #changelist .pagination {
+        float: none !important;
+        justify-content: flex-start;
     }
 }
