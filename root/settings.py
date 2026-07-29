@@ -177,14 +177,14 @@ SPECTACULAR_SETTINGS = {
 
 JAZZMIN_SETTINGS = {
     "site_title": "TaskFlow Admin",
-    "site_header": "TaskFlow boshqaruv paneli",
+    "site_header": "TaskFlow Administration",
     "site_brand": "TaskFlow",
-    "welcome_sign": "TaskFlow boshqaruv paneliga xush kelibsiz",
+    "welcome_sign": "Welcome to TaskFlow Administration",
     "copyright": "TaskFlow",
     "search_model": ["apps.User", "apps.Project", "apps.Task"],
     "user_avatar": "avatar",
     "topmenu_links": [
-        {"name": "Bosh sahifa", "url": "admin:index", "permissions": ["apps.view_user"]},
+        {"name": "Home", "url": "admin:index", "permissions": ["apps.view_user"]},
         {"model": "apps.Project"},
         {"model": "apps.Task"},
     ],

@@ -37,7 +37,7 @@ class TaskFlowUserAdmin(ImportExportMixin, UserAdmin):
     search_fields = ("email", "username", "first_name", "last_name", "phone", "job_title")
     ordering = ("email",)
 
-    @admin.display(description="To‘liq ism", ordering="first_name")
+    @admin.display(description="Full name", ordering="first_name")
     def full_name(self, obj):
         return obj.get_full_name() or "—"
 
@@ -52,7 +52,7 @@ class WorkspaceAdmin(ImportExportModelAdmin):
     readonly_fields = ("created_at", "updated_at")
     inlines = (MembershipInline,)
 
-    @admin.display(description="A’zolar")
+    @admin.display(description="Members")
     def member_count(self, obj):
         return obj.memberships.count()
 
@@ -119,11 +119,11 @@ class ConversationAdmin(ImportExportModelAdmin):
     autocomplete_fields = ("workspace",)
     readonly_fields = ("created_at", "updated_at")
 
-    @admin.display(description="Suhbat")
+    @admin.display(description="Conversation")
     def display_title(self, obj):
-        return obj.title or "Nomsiz suhbat"
+        return obj.title or "Untitled conversation"
 
-    @admin.display(description="Ishtirokchilar")
+    @admin.display(description="Participants")
     def participant_count(self, obj):
         return obj.participant_links.count()
 
@@ -148,7 +148,7 @@ class MessageAdmin(ImportExportModelAdmin):
     readonly_fields = ("created_at", "updated_at", "edited_at")
     date_hierarchy = "created_at"
 
-    @admin.display(description="Xabar")
+    @admin.display(description="Message")
     def short_body(self, obj):
         return obj.body[:60] + ("…" if len(obj.body) > 60 else "")
 
@@ -196,6 +196,6 @@ class SupportTicketAdmin(ImportExportModelAdmin):
     date_hierarchy = "created_at"
 
 
-admin.site.site_header = "TaskFlow boshqaruv paneli"
+admin.site.site_header = "TaskFlow Administration"
 admin.site.site_title = "TaskFlow Admin"
-admin.site.index_title = "Boshqaruv paneli"
+admin.site.index_title = "Administration Dashboard"

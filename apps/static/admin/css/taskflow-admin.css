@@ -298,6 +298,56 @@ body.taskflow-dark select {
     color-scheme: dark;
 }
 
+body.taskflow-dark input:not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]),
+body.taskflow-dark textarea,
+body.taskflow-dark select,
+body.taskflow-dark .vTextField,
+body.taskflow-dark .vLargeTextField,
+body.taskflow-dark .vURLField,
+body.taskflow-dark .vIntegerField,
+body.taskflow-dark .vDateField,
+body.taskflow-dark .vTimeField,
+body.taskflow-dark .form-control,
+body.taskflow-dark .form-control-navbar,
+body.taskflow-dark .select2-container--default .select2-selection--single,
+body.taskflow-dark .select2-container--default .select2-selection--multiple,
+body.taskflow-dark .select2-dropdown,
+body.taskflow-dark .select2-search__field {
+    background-color: var(--tf-surface-alt) !important;
+    border-color: var(--tf-border) !important;
+    color: var(--tf-text) !important;
+    -webkit-text-fill-color: var(--tf-text) !important;
+}
+
+body.taskflow-dark input::placeholder,
+body.taskflow-dark textarea::placeholder,
+body.taskflow-dark .form-control-navbar::placeholder {
+    color: var(--tf-muted) !important;
+    opacity: 0.72;
+    -webkit-text-fill-color: var(--tf-muted) !important;
+}
+
+body.taskflow-dark input:focus,
+body.taskflow-dark textarea:focus,
+body.taskflow-dark select:focus,
+body.taskflow-dark .form-control:focus {
+    background-color: var(--tf-surface-alt) !important;
+    border-color: var(--tf-primary) !important;
+    box-shadow: 0 0 0 3px rgba(85, 163, 243, 0.16) !important;
+}
+
+body.taskflow-dark input:-webkit-autofill,
+body.taskflow-dark input:-webkit-autofill:hover,
+body.taskflow-dark input:-webkit-autofill:focus {
+    box-shadow: 0 0 0 1000px var(--tf-surface-alt) inset !important;
+    -webkit-text-fill-color: var(--tf-text) !important;
+}
+
+body.taskflow-dark select option {
+    background: var(--tf-surface);
+    color: var(--tf-text);
+}
+
 @media (max-width: 767px) {
     .main-header form.form-inline {
         display: none;
