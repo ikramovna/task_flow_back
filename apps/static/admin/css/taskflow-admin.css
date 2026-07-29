@@ -1,0 +1,273 @@
+:root {
+    --tf-primary: #2f73b9;
+    --tf-primary-soft: #e8f1fb;
+    --tf-bg: #f7f9fc;
+    --tf-surface: #ffffff;
+    --tf-surface-alt: #f2f6fb;
+    --tf-border: #dfe7f1;
+    --tf-text: #111827;
+    --tf-muted: #66758d;
+    --tf-shadow: 0 8px 24px rgba(30, 64, 110, 0.06);
+}
+
+html,
+body {
+    font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+body,
+.content-wrapper {
+    background: var(--tf-bg) !important;
+    color: var(--tf-text);
+}
+
+.main-header {
+    background: var(--tf-surface) !important;
+    border-bottom: 1px solid var(--tf-border) !important;
+    box-shadow: none;
+}
+
+.main-header .nav-link,
+.main-header .navbar-nav .nav-link {
+    color: var(--tf-muted) !important;
+}
+
+.main-header .nav-link:hover {
+    color: var(--tf-primary) !important;
+}
+
+.main-sidebar {
+    background: var(--tf-surface) !important;
+    border-right: 1px solid var(--tf-border);
+    box-shadow: none !important;
+}
+
+#jazzy-logo {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--tf-surface) !important;
+    border-bottom: 1px solid var(--tf-border);
+    color: var(--tf-text) !important;
+    font-weight: 700;
+}
+
+#jazzy-logo .brand-image {
+    display: none;
+}
+
+#jazzy-logo::before {
+    content: "✓";
+    display: grid;
+    width: 32px;
+    height: 32px;
+    place-items: center;
+    border-radius: 50%;
+    background: var(--tf-primary);
+    color: #fff;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+#jazzy-logo .brand-text {
+    color: var(--tf-text);
+    font-weight: 700 !important;
+}
+
+.sidebar .user-panel {
+    border-color: var(--tf-border) !important;
+}
+
+.sidebar .user-panel .info a,
+.sidebar .nav-header,
+.sidebar-light-primary .nav-sidebar > .nav-item > .nav-link {
+    color: var(--tf-muted) !important;
+}
+
+.sidebar-light-primary .nav-sidebar > .nav-item > .nav-link {
+    margin: 3px 8px;
+    width: auto;
+    border-radius: 12px;
+}
+
+.sidebar-light-primary .nav-sidebar > .nav-item > .nav-link:hover {
+    background: var(--tf-surface-alt);
+    color: var(--tf-primary) !important;
+}
+
+.sidebar-light-primary .nav-sidebar > .nav-item > .nav-link.active {
+    background: var(--tf-primary-soft) !important;
+    color: var(--tf-primary) !important;
+    box-shadow: none;
+    font-weight: 600;
+}
+
+.content-header,
+.content.border-bottom {
+    background: transparent !important;
+    border-color: var(--tf-border) !important;
+}
+
+.content-wrapper h1,
+.content-wrapper h2,
+.content-wrapper h3,
+.content-wrapper h4,
+.content-wrapper h5,
+.content-wrapper label,
+.breadcrumb-item.active {
+    color: var(--tf-text);
+}
+
+.breadcrumb {
+    background: transparent;
+}
+
+.breadcrumb a,
+a {
+    color: var(--tf-primary);
+}
+
+.card,
+.module,
+.dropdown-menu,
+.modal-content,
+.login-box .card {
+    background: var(--tf-surface) !important;
+    border: 1px solid var(--tf-border) !important;
+    border-radius: 14px;
+    box-shadow: var(--tf-shadow) !important;
+    color: var(--tf-text);
+}
+
+.card-header,
+.modal-header,
+.modal-footer {
+    background: transparent !important;
+    border-color: var(--tf-border) !important;
+}
+
+.card-title {
+    color: var(--tf-text);
+    font-weight: 650;
+}
+
+.table,
+.table td,
+.table th,
+.table thead th {
+    color: var(--tf-text);
+    border-color: var(--tf-border);
+}
+
+.table thead th {
+    background: var(--tf-surface-alt);
+}
+
+.table-striped tbody tr:nth-of-type(odd) {
+    background: color-mix(in srgb, var(--tf-surface-alt) 58%, transparent);
+}
+
+.table-hover tbody tr:hover,
+.table-striped tbody tr:nth-of-type(odd):hover {
+    background: var(--tf-primary-soft);
+}
+
+.form-control,
+.select2-container--default .select2-selection--single,
+.select2-container--default .select2-selection--multiple,
+.select2-dropdown {
+    background: var(--tf-surface) !important;
+    border-color: var(--tf-border) !important;
+    color: var(--tf-text) !important;
+}
+
+.form-control:focus,
+.select2-container--default.select2-container--focus .select2-selection--multiple {
+    border-color: var(--tf-primary) !important;
+    box-shadow: 0 0 0 3px rgba(47, 115, 185, 0.14);
+}
+
+.btn-primary,
+.btn-info,
+.bg-primary {
+    background: var(--tf-primary) !important;
+    border-color: var(--tf-primary) !important;
+}
+
+.btn-success {
+    background: #23b783;
+    border-color: #23b783;
+}
+
+.small-box,
+.info-box {
+    border-radius: 14px;
+    box-shadow: var(--tf-shadow);
+}
+
+.main-footer {
+    background: var(--tf-surface);
+    border-color: var(--tf-border);
+    color: var(--tf-muted);
+}
+
+#taskflow-theme-toggle {
+    display: inline-grid;
+    width: 38px;
+    height: 38px;
+    margin: 6px 8px 0 4px;
+    place-items: center;
+    border: 1px solid var(--tf-border);
+    border-radius: 50%;
+    background: var(--tf-surface);
+    color: var(--tf-muted);
+    cursor: pointer;
+    transition: 0.2s ease;
+}
+
+#taskflow-theme-toggle:hover {
+    border-color: var(--tf-primary);
+    color: var(--tf-primary);
+    transform: translateY(-1px);
+}
+
+body.taskflow-dark {
+    --tf-primary: #55a3f3;
+    --tf-primary-soft: #1d426c;
+    --tf-bg: #101827;
+    --tf-surface: #172236;
+    --tf-surface-alt: #202d41;
+    --tf-border: #2d3b52;
+    --tf-text: #f7f9fc;
+    --tf-muted: #a9bdd5;
+    --tf-shadow: none;
+    color-scheme: dark;
+}
+
+body.taskflow-dark .navbar-light .navbar-nav .nav-link,
+body.taskflow-dark .dropdown-item,
+body.taskflow-dark .select2-results__option,
+body.taskflow-dark .help,
+body.taskflow-dark .help-block,
+body.taskflow-dark .readonly {
+    color: var(--tf-muted) !important;
+}
+
+body.taskflow-dark .dropdown-item:hover,
+body.taskflow-dark .dropdown-item:focus,
+body.taskflow-dark .select2-results__option--highlighted {
+    background: var(--tf-primary-soft) !important;
+    color: var(--tf-text) !important;
+}
+
+body.taskflow-dark input,
+body.taskflow-dark textarea,
+body.taskflow-dark select {
+    color-scheme: dark;
+}
+
+@media (max-width: 767px) {
+    .main-header form.form-inline {
+        display: none;
+    }
+}
