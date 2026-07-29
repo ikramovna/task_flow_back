@@ -1,6 +1,11 @@
 from datetime import timedelta
 
+from django.contrib.auth.tokens import default_token_generator
+from django.core import mail
+from django.test import override_settings
 from django.utils import timezone
+from django.utils.encoding import force_bytes
+from django.utils.http import urlsafe_base64_encode
 from rest_framework import status
 from rest_framework.test import APITestCase
 
@@ -54,6 +59,43 @@ class TaskFlowAPITests(APITestCase):
         self.assertEqual(changed.status_code, status.HTTP_200_OK)
         self.user.refresh_from_db()
         self.assertTrue(self.user.check_password("NewStrongPass456"))
+
+    @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+    def disabled_password_reset_flow(self):
+        """Enable this test when password-reset URLs are enabled."""
+        self.client.force_authenticate(user=None)
+        requested = self.client.post(
+            "/api/v1/auth/password-reset/",
+            {"email": self.user.email},
+            format="json",
+        )
+        self.assertEqual(requested.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(mail.outbox), 1)
+
+        uid = urlsafe_base64_encode(force_bytes(self.user.pk))
+        token = default_token_generator.make_token(self.user)
+        confirmed = self.client.post(
+            "/api/v1/auth/password-reset/confirm/",
+            {
+                "uid": uid,
+                "token": token,
+                "new_password": "ResetStrongPass456",
+                "confirm_password": "ResetStrongPass456",
+            },
+            format="json",
+        )
+        self.assertEqual(confirmed.status_code, status.HTTP_200_OK)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("ResetStrongPass456"))
+
+    def test_public_registration_is_disabled(self):
+        self.client.force_authenticate(user=None)
+        response = self.client.post(
+            "/api/v1/auth/register/",
+            {"email": "new@example.com", "username": "new-user", "password": "StrongPass123"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_messages_are_visible_only_to_participants(self):
         conversation = Conversation.objects.create(workspace=self.workspace)

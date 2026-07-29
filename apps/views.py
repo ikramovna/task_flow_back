@@ -3,11 +3,16 @@ import io
 from datetime import timedelta
 
 from django.core.files.base import ContentFile
+from django.core.mail import send_mail
+from django.conf import settings
+from django.contrib.auth.tokens import default_token_generator
 from django.http import FileResponse
 from django.db import transaction
 from django.db.models import Count, Q
 from django.db.models.functions import TruncMonth
 from django.utils import timezone
+from django.utils.encoding import force_bytes
+from django.utils.http import urlsafe_base64_encode
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters, generics, serializers, status, viewsets
 from rest_framework.decorators import action
@@ -18,15 +23,63 @@ from rest_framework.views import APIView
 from drf_spectacular.utils import extend_schema, inline_serializer
 
 from .filters import EventFilter, ProjectFilter, TaskFilter
-from .models import Conversation, ConversationParticipant, Event, FAQ, Membership, Message, Project, Report, SupportTicket, Task, TimeEntry, UserPreference, Workspace
+from .models import Conversation, ConversationParticipant, Event, FAQ, Membership, Message, Project, Report, SupportTicket, Task, TimeEntry, User, UserPreference, Workspace
 from .pagination import StandardPagination
 from .permissions import IsWorkspaceMember
-from .serializers import AccountDeleteSerializer, ConversationSerializer, EventSerializer, FAQSerializer, MembershipSerializer, MessageSerializer, PasswordChangeSerializer, ProfileSerializer, ProjectSerializer, RegisterSerializer, ReportSerializer, SupportTicketSerializer, TaskSerializer, TimeEntrySerializer, TwoFactorSerializer, UserPreferenceSerializer, WorkspaceSerializer
+from .serializers import AccountDeleteSerializer, ConversationSerializer, EventSerializer, FAQSerializer, MembershipSerializer, MessageSerializer, PasswordChangeSerializer, PasswordResetConfirmSerializer, PasswordResetRequestSerializer, ProfileSerializer, ProjectSerializer, ReportSerializer, SupportTicketSerializer, TaskSerializer, TimeEntrySerializer, TwoFactorSerializer, UserPreferenceSerializer, WorkspaceSerializer
 
 
-class RegisterView(generics.CreateAPIView):
-    serializer_class = RegisterSerializer
+class PasswordResetRequestView(generics.GenericAPIView):
+    serializer_class = PasswordResetRequestSerializer
     permission_classes = (AllowAny,)
+
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = User.objects.filter(
+            email__iexact=serializer.validated_data["email"],
+            is_active=True,
+        ).first()
+
+        if user:
+            uid = urlsafe_base64_encode(force_bytes(user.pk))
+            token = default_token_generator.make_token(user)
+            reset_url = f"{settings.FRONTEND_URL.rstrip('/')}/reset-password?uid={uid}&token={token}"
+            send_mail(
+                subject="TaskFlow parolini tiklash",
+                message=(
+                    f"Salom {user.get_full_name() or user.email},\n\n"
+                    "TaskFlow parolingizni yangilash uchun quyidagi havolani oching:\n"
+                    f"{reset_url}\n\n"
+                    "Agar bu so‘rovni siz yubormagan bo‘lsangiz, xabarni e’tiborsiz qoldiring."
+                ),
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[user.email],
+            )
+
+        return Response({
+            "detail": "Agar ushbu email mavjud bo‘lsa, parolni tiklash havolasi yuborildi."
+        })
+
+
+class PasswordResetConfirmView(generics.GenericAPIView):
+    serializer_class = PasswordResetConfirmSerializer
+    permission_classes = (AllowAny,)
+
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.validated_data["user"]
+
+        if not default_token_generator.check_token(user, serializer.validated_data["token"]):
+            return Response(
+                {"token": "Reset link is invalid or expired."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        user.set_password(serializer.validated_data["new_password"])
+        user.save(update_fields=["password"])
+        return Response({"detail": "Password reset successfully."})
 
 
 class WorkspaceViewSet(viewsets.ModelViewSet):

@@ -37,6 +37,7 @@ ALLOWED_HOSTS = [host.strip() for host in os.getenv('ALLOWED_HOSTS', 'localhost,
 
 INSTALLED_APPS = [
     'jazzmin',
+    'import_export',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -136,6 +137,16 @@ MEDIA_ROOT = BASE_DIR / 'media'
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 AUTH_USER_MODEL = 'apps.User'
 CORS_ALLOWED_ORIGINS = [origin.strip() for origin in os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:3000,http://localhost:5173').split(',') if origin.strip()]
+FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3000')
+
+EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend')
+EMAIL_HOST = os.getenv('EMAIL_HOST', 'localhost')
+EMAIL_PORT = int(os.getenv('EMAIL_PORT', '587'))
+EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
+EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'True').lower() == 'true'
+DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'TaskFlow <noreply@taskflow.local>')
+PASSWORD_RESET_TIMEOUT = 60 * 60
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': ('rest_framework_simplejwt.authentication.JWTAuthentication',),
@@ -211,6 +222,9 @@ JAZZMIN_SETTINGS = {
     "related_modal_active": True,
     "changeform_format": "horizontal_tabs",
     "language_chooser": False,
+    "custom_css": "admin/css/taskflow-admin.css",
+    "custom_js": "admin/js/taskflow-theme.js",
+    "use_google_fonts_cdn": False,
 }
 
 JAZZMIN_UI_TWEAKS = {
@@ -218,7 +232,7 @@ JAZZMIN_UI_TWEAKS = {
     "footer_small_text": True,
     "body_small_text": False,
     "brand_small_text": False,
-    "brand_colour": "navbar-primary",
+    "brand_colour": "navbar-white",
     "accent": "accent-primary",
     "navbar": "navbar-white navbar-light",
     "no_navbar_border": True,
@@ -226,15 +240,14 @@ JAZZMIN_UI_TWEAKS = {
     "layout_boxed": False,
     "footer_fixed": False,
     "sidebar_fixed": True,
-    "sidebar": "sidebar-dark-primary",
+    "sidebar": "sidebar-light-primary",
     "sidebar_nav_small_text": False,
     "sidebar_disable_expand": False,
     "sidebar_nav_child_indent": True,
     "sidebar_nav_compact_style": False,
     "sidebar_nav_legacy_style": False,
     "sidebar_nav_flat_style": False,
-    "theme": "flatly",
-    "dark_mode_theme": "darkly",
+    "theme": "default",
     "button_classes": {
         "primary": "btn-primary",
         "secondary": "btn-outline-secondary",
