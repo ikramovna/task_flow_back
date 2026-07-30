@@ -11,6 +11,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 
 from .models import Conversation, ConversationParticipant, Membership, Project, Report, Task, TimeEntry, User, Workspace
+from .resources import UserResource
 
 
 class TaskFlowAPITests(APITestCase):
@@ -100,6 +101,12 @@ class TaskFlowAPITests(APITestCase):
 
     def test_admin_import_formats_include_xlsx(self):
         self.assertIn("xlsx", [file_format().get_extension() for file_format in settings.IMPORT_FORMATS])
+
+    def test_user_resource_imports_but_does_not_export_password(self):
+        resource = UserResource()
+        self.assertEqual(resource._meta.import_id_fields, ("email",))
+        self.assertIn("password", [field.column_name for field in resource.get_import_fields()])
+        self.assertNotIn("password", [field.column_name for field in resource.get_export_fields()])
 
     def test_unsaved_time_entry_has_zero_minutes(self):
         entry = TimeEntry()
