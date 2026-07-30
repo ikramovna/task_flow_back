@@ -227,6 +227,32 @@ class TaskFlowAPITests(APITestCase):
         self.assertFalse(form.is_valid())
         self.assertIn("already selected", str(form.errors))
 
+    def test_bulk_membership_admin_form_updates_existing_membership(self):
+        department = Department.objects.create(
+            workspace=self.workspace,
+            name="Operations",
+            code="operations",
+        )
+        form = BulkMembershipAdminForm(
+            data={
+                "workspace": self.workspace.pk,
+                "department": department.pk,
+                "managers": [self.other.pk],
+                "is_active": True,
+            }
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        form.save()
+        form.save_remaining_memberships()
+
+        membership = Membership.objects.get(
+            workspace=self.workspace,
+            user=self.other,
+        )
+        self.assertEqual(membership.department, department)
+        self.assertEqual(membership.role, Membership.Role.MANAGER)
+
     def test_messages_are_visible_only_to_participants(self):
         conversation = Conversation.objects.create(workspace=self.workspace)
         ConversationParticipant.objects.create(conversation=conversation, user=self.user)

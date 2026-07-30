@@ -64,19 +64,6 @@ class BulkMembershipAdminForm(forms.ModelForm):
         if not selected_roles:
             raise forms.ValidationError("Select at least one user for one of the roles.")
 
-        if workspace and selected_roles:
-            existing_users = list(
-                Membership.objects.filter(
-                    workspace=workspace,
-                    user_id__in=selected_roles,
-                ).values_list("user__email", flat=True)
-            )
-            if existing_users:
-                raise forms.ValidationError(
-                    "These users are already members of this workspace: "
-                    + ", ".join(existing_users)
-                )
-
         return cleaned_data
 
     def save(self, commit=True):
@@ -86,7 +73,15 @@ class BulkMembershipAdminForm(forms.ModelForm):
             for user in self.cleaned_data[field_name]
         ]
         first_user, first_role = selections[0]
-        self.instance.workspace = self.cleaned_data["workspace"]
+        workspace = self.cleaned_data["workspace"]
+        existing_membership = Membership.objects.filter(
+            workspace=workspace,
+            user=first_user,
+        ).first()
+        if existing_membership:
+            self.instance = existing_membership
+
+        self.instance.workspace = workspace
         self.instance.department = self.cleaned_data.get("department")
         self.instance.is_active = self.cleaned_data["is_active"]
         self.instance.user = first_user
@@ -95,15 +90,14 @@ class BulkMembershipAdminForm(forms.ModelForm):
         return super().save(commit=commit)
 
     def save_remaining_memberships(self):
-        memberships = [
-            Membership(
+        for user, role in self._remaining_memberships:
+            Membership.objects.update_or_create(
                 workspace=self.instance.workspace,
-                department=self.instance.department,
                 user=user,
-                role=role,
-                is_active=self.instance.is_active,
+                defaults={
+                    "department": self.instance.department,
+                    "role": role,
+                    "is_active": self.instance.is_active,
+                },
             )
-            for user, role in self._remaining_memberships
-        ]
-        Membership.objects.bulk_create(memberships)
-        return len(memberships)
+        return len(self._remaining_memberships)
