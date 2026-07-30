@@ -1,5 +1,6 @@
 from datetime import timedelta
 
+from django.conf import settings
 from django.contrib.auth.tokens import default_token_generator
 from django.core import mail
 from django.test import override_settings
@@ -96,6 +97,9 @@ class TaskFlowAPITests(APITestCase):
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_admin_import_formats_include_xlsx(self):
+        self.assertIn("xlsx", [file_format().get_extension() for file_format in settings.IMPORT_FORMATS])
 
     def test_unsaved_time_entry_has_zero_minutes(self):
         entry = TimeEntry()
