@@ -2,6 +2,7 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from import_export.admin import ImportExportMixin, ImportExportModelAdmin
 
+from .forms import BulkMembershipAdminForm
 from .models import Conversation, ConversationParticipant, Department, Event, FAQ, Membership, Message, Project, Report, SupportTicket, Task, TimeEntry, User, UserPreference, Workspace
 from .resources import (
     ConversationParticipantResource,
@@ -80,6 +81,36 @@ class MembershipAdmin(ImportExportModelAdmin):
     search_fields = ("user__email", "user__first_name", "user__last_name", "workspace__name", "department__name")
     autocomplete_fields = ("workspace", "department", "user")
     readonly_fields = ("joined_at", "created_at", "updated_at")
+
+    def get_form(self, request, obj=None, **kwargs):
+        if obj is None:
+            kwargs["form"] = BulkMembershipAdminForm
+        return super().get_form(request, obj, **kwargs)
+
+    def get_fieldsets(self, request, obj=None):
+        if obj is None:
+            return (
+                (
+                    None,
+                    {
+                        "fields": (
+                            "workspace",
+                            "department",
+                            "owners",
+                            "admins",
+                            "managers",
+                            "members",
+                            "is_active",
+                        )
+                    },
+                ),
+            )
+        return super().get_fieldsets(request, obj)
+
+    def save_related(self, request, form, formsets, change):
+        super().save_related(request, form, formsets, change)
+        if not change and isinstance(form, BulkMembershipAdminForm):
+            form.save_remaining_memberships()
 
 
 @admin.register(Project)

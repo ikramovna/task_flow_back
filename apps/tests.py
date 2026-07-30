@@ -11,6 +11,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 from tablib import Dataset
 
+from .forms import BulkMembershipAdminForm
 from .models import Conversation, ConversationParticipant, Department, Membership, Project, Report, Task, TimeEntry, User, Workspace
 from .resources import DepartmentResource, UserResource
 
@@ -162,6 +163,69 @@ class TaskFlowAPITests(APITestCase):
     def test_unsaved_time_entry_has_zero_minutes(self):
         entry = TimeEntry()
         self.assertEqual(entry.minutes, 0)
+
+    def test_bulk_membership_admin_form_assigns_multiple_users_to_each_role(self):
+        department = Department.objects.create(
+            workspace=self.workspace,
+            name="Admissions",
+            code="admissions",
+        )
+        users = [
+            User.objects.create_user(
+                username=f"bulk-{index}",
+                email=f"bulk-{index}@example.com",
+                password="StrongPass123",
+            )
+            for index in range(6)
+        ]
+        form = BulkMembershipAdminForm(
+            data={
+                "workspace": self.workspace.pk,
+                "department": department.pk,
+                "owners": [users[0].pk],
+                "admins": [users[1].pk],
+                "managers": [users[2].pk, users[3].pk],
+                "members": [users[4].pk, users[5].pk],
+                "is_active": True,
+            }
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        form.save()
+        form.save_remaining_memberships()
+
+        created = Membership.objects.filter(
+            workspace=self.workspace,
+            department=department,
+            user__in=users,
+        )
+        self.assertEqual(created.count(), 6)
+        self.assertEqual(
+            created.filter(role=Membership.Role.MANAGER).count(),
+            2,
+        )
+        self.assertEqual(
+            created.filter(role=Membership.Role.MEMBER).count(),
+            2,
+        )
+
+    def test_bulk_membership_admin_form_rejects_user_in_multiple_roles(self):
+        user = User.objects.create_user(
+            username="duplicate-role",
+            email="duplicate-role@example.com",
+            password="StrongPass123",
+        )
+        form = BulkMembershipAdminForm(
+            data={
+                "workspace": self.workspace.pk,
+                "owners": [user.pk],
+                "admins": [user.pk],
+                "is_active": True,
+            }
+        )
+
+        self.assertFalse(form.is_valid())
+        self.assertIn("already selected", str(form.errors))
 
     def test_messages_are_visible_only_to_participants(self):
         conversation = Conversation.objects.create(workspace=self.workspace)
