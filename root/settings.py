@@ -200,6 +200,7 @@ JAZZMIN_SETTINGS = {
         "auth.Group": "fas fa-user-shield",
         "apps.User": "fas fa-user",
         "apps.Workspace": "fas fa-building",
+        "apps.Department": "fas fa-sitemap",
         "apps.Membership": "fas fa-users",
         "apps.Project": "fas fa-folder-open",
         "apps.Task": "fas fa-list-check",
@@ -216,6 +217,7 @@ JAZZMIN_SETTINGS = {
     "order_with_respect_to": [
         "apps",
         "apps.Workspace",
+        "apps.Department",
         "apps.Project",
         "apps.Task",
         "apps.Event",

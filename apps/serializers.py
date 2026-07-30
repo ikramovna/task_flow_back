@@ -4,7 +4,7 @@ from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
 from rest_framework import serializers
 
-from .models import Conversation, ConversationParticipant, Event, FAQ, Membership, Message, Project, Report, SupportTicket, Task, TimeEntry, User, UserPreference, Workspace
+from .models import Conversation, ConversationParticipant, Department, Event, FAQ, Membership, Message, Project, Report, SupportTicket, Task, TimeEntry, User, UserPreference, Workspace
 
 
 class UserBriefSerializer(serializers.ModelSerializer):
@@ -24,6 +24,14 @@ class ProfileSerializer(serializers.ModelSerializer):
         read_only_fields = ("id", "email", "username", "two_factor_enabled", "date_joined")
 
 
+class DepartmentSerializer(serializers.ModelSerializer):
+    member_count = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = Department
+        fields = ("id", "workspace", "name", "code", "description", "is_active", "member_count", "created_at", "updated_at")
+
+
 class MembershipSerializer(serializers.ModelSerializer):
     user_detail = UserBriefSerializer(source="user", read_only=True)
     efficiency = serializers.SerializerMethodField()
@@ -32,8 +40,15 @@ class MembershipSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Membership
-        fields = ("id", "workspace", "user", "user_detail", "role", "is_active", "joined_at", "efficiency", "completed_tasks", "in_progress_tasks")
+        fields = ("id", "workspace", "department", "user", "user_detail", "role", "is_active", "joined_at", "efficiency", "completed_tasks", "in_progress_tasks")
         read_only_fields = ("joined_at",)
+
+    def validate(self, attrs):
+        workspace = attrs.get("workspace", getattr(self.instance, "workspace", None))
+        department = attrs.get("department", getattr(self.instance, "department", None))
+        if department and workspace and department.workspace_id != workspace.id:
+            raise serializers.ValidationError({"department": "Department must belong to the selected workspace."})
+        return attrs
 
     def _task_counts(self, obj):
         qs = obj.user.assigned_tasks.filter(project__workspace=obj.workspace)
@@ -53,10 +68,11 @@ class MembershipSerializer(serializers.ModelSerializer):
 class WorkspaceSerializer(serializers.ModelSerializer):
     owner_detail = UserBriefSerializer(source="owner", read_only=True)
     member_count = serializers.IntegerField(read_only=True)
+    department_count = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = Workspace
-        fields = ("id", "name", "slug", "owner", "owner_detail", "member_count", "created_at")
+        fields = ("id", "name", "slug", "owner", "owner_detail", "member_count", "department_count", "created_at")
         read_only_fields = ("owner",)
 
     @transaction.atomic

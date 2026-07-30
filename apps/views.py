@@ -23,10 +23,10 @@ from rest_framework.views import APIView
 from drf_spectacular.utils import extend_schema, inline_serializer
 
 from .filters import EventFilter, ProjectFilter, TaskFilter
-from .models import Conversation, ConversationParticipant, Event, FAQ, Membership, Message, Project, Report, SupportTicket, Task, TimeEntry, User, UserPreference, Workspace
+from .models import Conversation, ConversationParticipant, Department, Event, FAQ, Membership, Message, Project, Report, SupportTicket, Task, TimeEntry, User, UserPreference, Workspace
 from .pagination import StandardPagination
 from .permissions import IsWorkspaceMember
-from .serializers import AccountDeleteSerializer, ConversationSerializer, EventSerializer, FAQSerializer, MembershipSerializer, MessageSerializer, PasswordChangeSerializer, PasswordResetConfirmSerializer, PasswordResetRequestSerializer, ProfileSerializer, ProjectSerializer, ReportSerializer, SupportTicketSerializer, TaskSerializer, TimeEntrySerializer, TwoFactorSerializer, UserPreferenceSerializer, WorkspaceSerializer
+from .serializers import AccountDeleteSerializer, ConversationSerializer, DepartmentSerializer, EventSerializer, FAQSerializer, MembershipSerializer, MessageSerializer, PasswordChangeSerializer, PasswordResetConfirmSerializer, PasswordResetRequestSerializer, ProfileSerializer, ProjectSerializer, ReportSerializer, SupportTicketSerializer, TaskSerializer, TimeEntrySerializer, TwoFactorSerializer, UserPreferenceSerializer, WorkspaceSerializer
 
 
 class PasswordResetRequestView(generics.GenericAPIView):
@@ -90,7 +90,10 @@ class WorkspaceViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return self.queryset
-        return Workspace.objects.filter(memberships__user=self.request.user, memberships__is_active=True).annotate(member_count=Count("memberships", filter=Q(memberships__is_active=True))).distinct()
+        return Workspace.objects.filter(memberships__user=self.request.user, memberships__is_active=True).annotate(
+            member_count=Count("memberships", filter=Q(memberships__is_active=True), distinct=True),
+            department_count=Count("departments", filter=Q(departments__is_active=True), distinct=True),
+        ).distinct()
 
 
 class WorkspaceScopedMixin:
@@ -109,14 +112,14 @@ class MembershipViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
     queryset = Membership.objects.none()
     serializer_class = MembershipSerializer
     filter_backends = (DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter)
-    filterset_fields = ("role", "is_active")
+    filterset_fields = ("department", "role", "is_active")
     search_fields = ("user__first_name", "user__last_name", "user__email", "user__job_title")
     ordering_fields = ("joined_at", "user__first_name")
 
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return self.queryset
-        qs = Membership.objects.select_related("user", "workspace").filter(workspace__memberships__user=self.request.user, workspace__memberships__is_active=True)
+        qs = Membership.objects.select_related("user", "workspace", "department").filter(workspace__memberships__user=self.request.user, workspace__memberships__is_active=True)
         return qs.filter(workspace_id=self.workspace_id()) if self.workspace_id() else qs
 
     def perform_create(self, serializer):
@@ -131,6 +134,30 @@ class MembershipViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
         completed = tasks.filter(status=Task.Status.COMPLETED).count()
         efficiency = round(completed * 100 / tasks.count()) if tasks.exists() else 0
         return Response({"total_members": total, "average_efficiency": efficiency, "active_tasks": tasks.exclude(status=Task.Status.COMPLETED).count()})
+
+
+class DepartmentViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
+    queryset = Department.objects.none()
+    serializer_class = DepartmentSerializer
+    filter_backends = (DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter)
+    filterset_fields = ("workspace", "is_active")
+    search_fields = ("name", "code", "description")
+    ordering_fields = ("name", "code", "created_at")
+
+    def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return self.queryset
+        qs = Department.objects.filter(
+            workspace__memberships__user=self.request.user,
+            workspace__memberships__is_active=True,
+        ).select_related("workspace").annotate(
+            member_count=Count("memberships", filter=Q(memberships__is_active=True))
+        ).distinct()
+        return qs.filter(workspace_id=self.workspace_id()) if self.workspace_id() else qs
+
+    def perform_create(self, serializer):
+        self.ensure_member(serializer.validated_data["workspace"])
+        serializer.save()
 
 
 class ProjectViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):

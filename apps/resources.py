@@ -6,6 +6,7 @@ from .models import (
     ConversationParticipant,
     Event,
     FAQ,
+    Department,
     Membership,
     Message,
     Project,
@@ -57,6 +58,11 @@ class UserResource(TaskFlowResource):
 class WorkspaceResource(TaskFlowResource):
     class Meta(TaskFlowResource.Meta):
         model = Workspace
+
+
+class DepartmentResource(TaskFlowResource):
+    class Meta(TaskFlowResource.Meta):
+        model = Department
 
 
 class MembershipResource(TaskFlowResource):

@@ -10,7 +10,7 @@ from django.utils.http import urlsafe_base64_encode
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from .models import Conversation, ConversationParticipant, Membership, Project, Report, Task, TimeEntry, User, Workspace
+from .models import Conversation, ConversationParticipant, Department, Membership, Project, Report, Task, TimeEntry, User, Workspace
 from .resources import UserResource
 
 
@@ -31,6 +31,45 @@ class TaskFlowAPITests(APITestCase):
         ids = [row["id"] for row in response.data]
         self.assertIn(str(self.workspace.id), ids)
         self.assertNotIn(str(hidden.id), ids)
+
+    def test_create_department_and_assign_member(self):
+        department_response = self.client.post(
+            "/api/v1/departments/",
+            {
+                "workspace": str(self.workspace.id),
+                "name": "Admissions",
+                "code": "admissions",
+                "description": "Student admissions office",
+            },
+            format="json",
+        )
+        self.assertEqual(department_response.status_code, status.HTTP_201_CREATED)
+        department = Department.objects.get(pk=department_response.data["id"])
+
+        membership = Membership.objects.get(workspace=self.workspace, user=self.other)
+        membership_response = self.client.patch(
+            f"/api/v1/members/{membership.id}/",
+            {"department": str(department.id)},
+            format="json",
+        )
+        self.assertEqual(membership_response.status_code, status.HTTP_200_OK)
+        membership.refresh_from_db()
+        self.assertEqual(membership.department, department)
+
+    def test_membership_rejects_department_from_another_workspace(self):
+        other_workspace = Workspace.objects.create(name="Other", slug="other", owner=self.user)
+        other_department = Department.objects.create(
+            workspace=other_workspace,
+            name="Finance",
+            code="finance",
+        )
+        membership = Membership.objects.get(workspace=self.workspace, user=self.other)
+        response = self.client.patch(
+            f"/api/v1/members/{membership.id}/",
+            {"department": str(other_department.id)},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
     def test_create_and_complete_task(self):
         payload = {"project": str(self.project.id), "title": "Build API", "priority": "high", "assignees": [self.other.id], "progress": 50}

@@ -1,6 +1,7 @@
 import uuid
 
 from django.contrib.auth.models import AbstractUser
+from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
@@ -35,6 +36,24 @@ class Workspace(TimeStampedModel):
         return self.name
 
 
+class Department(TimeStampedModel):
+    workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name="departments")
+    name = models.CharField(max_length=150)
+    code = models.SlugField(max_length=32)
+    description = models.TextField(blank=True)
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ("name",)
+        constraints = [
+            models.UniqueConstraint(fields=("workspace", "name"), name="unique_department_name_per_workspace"),
+            models.UniqueConstraint(fields=("workspace", "code"), name="unique_department_code_per_workspace"),
+        ]
+
+    def __str__(self):
+        return f"{self.workspace} — {self.name}"
+
+
 class Membership(TimeStampedModel):
     class Role(models.TextChoices):
         OWNER = "owner", "Owner"
@@ -43,6 +62,13 @@ class Membership(TimeStampedModel):
         MEMBER = "member", "Member"
 
     workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name="memberships")
+    department = models.ForeignKey(
+        Department,
+        on_delete=models.SET_NULL,
+        related_name="memberships",
+        null=True,
+        blank=True,
+    )
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="memberships")
     role = models.CharField(max_length=16, choices=Role.choices, default=Role.MEMBER)
     is_active = models.BooleanField(default=True)
@@ -50,6 +76,11 @@ class Membership(TimeStampedModel):
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["workspace", "user"], name="unique_workspace_member")]
+
+    def clean(self):
+        super().clean()
+        if self.department_id and self.department.workspace_id != self.workspace_id:
+            raise ValidationError({"department": "Department must belong to the selected workspace."})
 
 
 class Project(TimeStampedModel):

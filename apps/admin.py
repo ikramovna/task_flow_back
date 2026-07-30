@@ -2,10 +2,11 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from import_export.admin import ImportExportMixin, ImportExportModelAdmin
 
-from .models import Conversation, ConversationParticipant, Event, FAQ, Membership, Message, Project, Report, SupportTicket, Task, TimeEntry, User, UserPreference, Workspace
+from .models import Conversation, ConversationParticipant, Department, Event, FAQ, Membership, Message, Project, Report, SupportTicket, Task, TimeEntry, User, UserPreference, Workspace
 from .resources import (
     ConversationParticipantResource,
     ConversationResource,
+    DepartmentResource,
     EventResource,
     FAQResource,
     MembershipResource,
@@ -24,7 +25,7 @@ from .resources import (
 class MembershipInline(admin.TabularInline):
     model = Membership
     extra = 0
-    autocomplete_fields = ("user",)
+    autocomplete_fields = ("department", "user")
 
 
 @admin.register(User)
@@ -57,13 +58,27 @@ class WorkspaceAdmin(ImportExportModelAdmin):
         return obj.memberships.count()
 
 
+@admin.register(Department)
+class DepartmentAdmin(ImportExportModelAdmin):
+    resource_classes = (DepartmentResource,)
+    list_display = ("name", "code", "workspace", "is_active", "member_count", "created_at")
+    list_filter = ("is_active", "workspace")
+    search_fields = ("name", "code", "description", "workspace__name")
+    autocomplete_fields = ("workspace",)
+    readonly_fields = ("created_at", "updated_at")
+
+    @admin.display(description="Members")
+    def member_count(self, obj):
+        return obj.memberships.filter(is_active=True).count()
+
+
 @admin.register(Membership)
 class MembershipAdmin(ImportExportModelAdmin):
     resource_classes = (MembershipResource,)
-    list_display = ("user", "workspace", "role", "is_active", "joined_at")
-    list_filter = ("role", "is_active", "workspace")
-    search_fields = ("user__email", "user__first_name", "user__last_name", "workspace__name")
-    autocomplete_fields = ("workspace", "user")
+    list_display = ("user", "workspace", "department", "role", "is_active", "joined_at")
+    list_filter = ("role", "is_active", "workspace", "department")
+    search_fields = ("user__email", "user__first_name", "user__last_name", "workspace__name", "department__name")
+    autocomplete_fields = ("workspace", "department", "user")
     readonly_fields = ("joined_at", "created_at", "updated_at")
 
 
