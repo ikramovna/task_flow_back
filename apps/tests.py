@@ -9,9 +9,10 @@ from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 from rest_framework import status
 from rest_framework.test import APITestCase
+from tablib import Dataset
 
 from .models import Conversation, ConversationParticipant, Department, Membership, Project, Report, Task, TimeEntry, User, Workspace
-from .resources import UserResource
+from .resources import DepartmentResource, UserResource
 
 
 class TaskFlowAPITests(APITestCase):
@@ -70,6 +71,17 @@ class TaskFlowAPITests(APITestCase):
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_department_resource_imports_workspace_by_name(self):
+        dataset = Dataset(
+            [self.workspace.name, "Academic Affairs", "", "", True],
+            headers=["workspace", "name", "code", "description", "is_active"],
+        )
+        result = DepartmentResource().import_data(dataset, dry_run=False, raise_errors=True)
+
+        self.assertFalse(result.has_errors())
+        department = Department.objects.get(workspace=self.workspace, name="Academic Affairs")
+        self.assertEqual(department.code, "academic-affairs")
 
     def test_create_and_complete_task(self):
         payload = {"project": str(self.project.id), "title": "Build API", "priority": "high", "assignees": [self.other.id], "progress": 50}

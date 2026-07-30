@@ -1,5 +1,7 @@
 from django.contrib.auth.hashers import identify_hasher, make_password
-from import_export import resources
+from django.utils.text import slugify
+from import_export import fields, resources
+from import_export.widgets import ForeignKeyWidget
 
 from .models import (
     Conversation,
@@ -61,8 +63,30 @@ class WorkspaceResource(TaskFlowResource):
 
 
 class DepartmentResource(TaskFlowResource):
+    workspace = fields.Field(
+        column_name="workspace",
+        attribute="workspace",
+        widget=ForeignKeyWidget(Workspace, field="name"),
+    )
+
+    def before_import_row(self, row, **kwargs):
+        if not row.get("code") and row.get("name"):
+            row["code"] = slugify(row["name"])[:32]
+
     class Meta(TaskFlowResource.Meta):
         model = Department
+        import_id_fields = ("workspace", "code")
+        fields = (
+            "id",
+            "workspace",
+            "name",
+            "code",
+            "description",
+            "is_active",
+            "created_at",
+            "updated_at",
+        )
+        export_order = fields
 
 
 class MembershipResource(TaskFlowResource):
