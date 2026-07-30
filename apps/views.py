@@ -196,13 +196,59 @@ class TaskViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
         if getattr(self, "swagger_fake_view", False):
             return self.queryset
         qs = Task.objects.filter(project__workspace__memberships__user=self.request.user, project__workspace__memberships__is_active=True).select_related("project", "created_by").prefetch_related("assignees").distinct()
-        return qs.filter(project__workspace_id=self.workspace_id()) if self.workspace_id() else qs
+        if self.workspace_id():
+            qs = qs.filter(project__workspace_id=self.workspace_id())
+        if self.request.query_params.get("my_tasks", "").lower() in ("1", "true", "yes"):
+            qs = qs.filter(assignees=self.request.user)
+        return qs
 
     def perform_create(self, serializer):
-        self.ensure_member(serializer.validated_data["project"].workspace)
+        project = serializer.validated_data["project"]
+        self.ensure_workspace_task_manager(project.workspace)
         serializer.save(created_by=self.request.user)
 
+    def ensure_workspace_task_manager(self, workspace):
+        can_manage = workspace.memberships.filter(
+            user=self.request.user,
+            is_active=True,
+            role__in=(
+                Membership.Role.OWNER,
+                Membership.Role.ADMIN,
+                Membership.Role.MANAGER,
+            ),
+        ).exists()
+        if not can_manage:
+            raise PermissionDenied(
+                "Only an Owner, Admin, or Manager can manage tasks."
+            )
+
+    def ensure_task_manager(self, task):
+        self.ensure_workspace_task_manager(task.project.workspace)
+
     def perform_update(self, serializer):
+        task = serializer.instance
+        membership = task.project.workspace.memberships.filter(
+            user=self.request.user,
+            is_active=True,
+        ).first()
+        if not membership:
+            raise PermissionDenied("You are not a member of this workspace.")
+
+        is_manager = membership.role in (
+            Membership.Role.OWNER,
+            Membership.Role.ADMIN,
+            Membership.Role.MANAGER,
+        )
+        changed_fields = set(serializer.validated_data)
+        member_fields = {"status", "progress"}
+        if not is_manager:
+            if not task.assignees.filter(pk=self.request.user.pk).exists():
+                raise PermissionDenied("You can update only tasks assigned to you.")
+            if not changed_fields.issubset(member_fields):
+                raise PermissionDenied(
+                    "Members can update only status and progress."
+                )
+
         previous = serializer.instance.status
         task = serializer.save()
         if task.status == Task.Status.COMPLETED and previous != Task.Status.COMPLETED:
@@ -211,6 +257,70 @@ class TaskViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
         elif task.status != Task.Status.COMPLETED and previous == Task.Status.COMPLETED:
             task.completed_at = None
             task.save(update_fields=["completed_at", "updated_at"])
+
+    def perform_destroy(self, instance):
+        self.ensure_task_manager(instance)
+        instance.delete()
+
+    def ensure_timer_access(self, task):
+        membership = task.project.workspace.memberships.filter(
+            user=self.request.user,
+            is_active=True,
+        ).first()
+        if not membership:
+            raise PermissionDenied("You are not a member of this workspace.")
+        is_manager = membership.role in (
+            Membership.Role.OWNER,
+            Membership.Role.ADMIN,
+            Membership.Role.MANAGER,
+        )
+        if not is_manager and not task.assignees.filter(pk=self.request.user.pk).exists():
+            raise PermissionDenied("You can track time only for tasks assigned to you.")
+
+    @action(detail=True, methods=["post"], url_path="start-timer")
+    def start_timer(self, request, pk=None):
+        task = self.get_object()
+        self.ensure_timer_access(task)
+        running_entry = TimeEntry.objects.filter(
+            task=task,
+            user=request.user,
+            ended_at__isnull=True,
+        ).first()
+        if running_entry:
+            return Response(
+                {
+                    "detail": "A timer is already running for this task.",
+                    "time_entry": TimeEntrySerializer(running_entry).data,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+        entry = TimeEntry.objects.create(
+            task=task,
+            user=request.user,
+            started_at=timezone.now(),
+        )
+        return Response(
+            TimeEntrySerializer(entry).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=True, methods=["post"], url_path="stop-timer")
+    def stop_timer(self, request, pk=None):
+        task = self.get_object()
+        self.ensure_timer_access(task)
+        entry = TimeEntry.objects.filter(
+            task=task,
+            user=request.user,
+            ended_at__isnull=True,
+        ).order_by("-started_at").first()
+        if not entry:
+            return Response(
+                {"detail": "No running timer was found for this task."},
+                status=status.HTTP_409_CONFLICT,
+            )
+        entry.ended_at = timezone.now()
+        entry.save(update_fields=["ended_at", "updated_at"])
+        return Response(TimeEntrySerializer(entry).data)
 
 
 class EventViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):

@@ -11,8 +11,8 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 from tablib import Dataset
 
-from .forms import BulkMembershipAdminForm
-from .models import Conversation, ConversationParticipant, Department, Membership, Project, Report, Task, TimeEntry, User, Workspace
+from .forms import BulkMembershipAdminForm, EventAdminForm
+from .models import Conversation, ConversationParticipant, Department, Event, Membership, Project, Report, Task, TimeEntry, User, Workspace
 from .resources import DepartmentResource, UserResource
 
 
@@ -94,11 +94,147 @@ class TaskFlowAPITests(APITestCase):
         self.assertEqual(task.progress, 100)
         self.assertIsNotNone(task.completed_at)
 
+    def test_manager_can_edit_task_but_member_cannot(self):
+        manager = User.objects.create_user(
+            username="task-manager",
+            email="task-manager@example.com",
+            password="StrongPass123",
+        )
+        Membership.objects.create(
+            workspace=self.workspace,
+            user=manager,
+            role=Membership.Role.MANAGER,
+        )
+        task = Task.objects.create(
+            project=self.project,
+            title="Manager task",
+            created_by=self.user,
+        )
+
+        self.client.force_authenticate(manager)
+        manager_response = self.client.patch(
+            f"/api/v1/tasks/{task.pk}/",
+            {"title": "Edited by manager"},
+            format="json",
+        )
+        self.assertEqual(manager_response.status_code, status.HTTP_200_OK)
+
+        self.client.force_authenticate(self.other)
+        member_response = self.client.patch(
+            f"/api/v1/tasks/{task.pk}/",
+            {"title": "Edited by member"},
+            format="json",
+        )
+        self.assertEqual(member_response.status_code, status.HTTP_403_FORBIDDEN)
+
+        task.refresh_from_db()
+        self.assertEqual(task.title, "Edited by manager")
+
+    def test_member_can_update_status_and_progress_of_assigned_task(self):
+        task = Task.objects.create(
+            project=self.project,
+            title="Member task",
+            created_by=self.user,
+        )
+        task.assignees.add(self.other)
+        self.client.force_authenticate(self.other)
+
+        allowed = self.client.patch(
+            f"/api/v1/tasks/{task.pk}/",
+            {"status": Task.Status.IN_PROGRESS, "progress": 30},
+            format="json",
+        )
+        forbidden = self.client.patch(
+            f"/api/v1/tasks/{task.pk}/",
+            {"title": "Member changed the title"},
+            format="json",
+        )
+
+        self.assertEqual(allowed.status_code, status.HTTP_200_OK)
+        self.assertEqual(forbidden.status_code, status.HTTP_403_FORBIDDEN)
+        task.refresh_from_db()
+        self.assertEqual(task.status, Task.Status.IN_PROGRESS)
+        self.assertEqual(task.progress, 30)
+        self.assertEqual(task.title, "Member task")
+
+    def test_my_tasks_filter_returns_only_assigned_tasks(self):
+        assigned = Task.objects.create(
+            project=self.project,
+            title="Assigned",
+            created_by=self.user,
+        )
+        assigned.assignees.add(self.other)
+        Task.objects.create(
+            project=self.project,
+            title="Not assigned",
+            created_by=self.user,
+        )
+        self.client.force_authenticate(self.other)
+
+        response = self.client.get("/api/v1/tasks/?my_tasks=true")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["id"], str(assigned.pk))
+
+    def test_member_can_start_and_stop_timer_for_assigned_task(self):
+        task = Task.objects.create(
+            project=self.project,
+            title="Timed task",
+            created_by=self.user,
+        )
+        task.assignees.add(self.other)
+        self.client.force_authenticate(self.other)
+
+        started = self.client.post(f"/api/v1/tasks/{task.pk}/start-timer/")
+        duplicate = self.client.post(f"/api/v1/tasks/{task.pk}/start-timer/")
+        stopped = self.client.post(f"/api/v1/tasks/{task.pk}/stop-timer/")
+
+        self.assertEqual(started.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(duplicate.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(stopped.status_code, status.HTTP_200_OK)
+        entry = TimeEntry.objects.get(pk=started.data["id"])
+        self.assertIsNotNone(entry.ended_at)
+        self.assertGreaterEqual(entry.minutes, 0)
+
     def test_calendar_rejects_invalid_time_range(self):
         now = timezone.now()
         payload = {"workspace": str(self.workspace.id), "title": "Review", "starts_at": now.isoformat(), "ends_at": (now - timedelta(hours=1)).isoformat()}
         response = self.client.post("/api/v1/events/", payload, format="json")
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_event_accepts_custom_event_type(self):
+        now = timezone.now()
+        payload = {
+            "workspace": str(self.workspace.id),
+            "title": "University ceremony",
+            "event_type": "Ceremony",
+            "starts_at": now.isoformat(),
+            "ends_at": (now + timedelta(hours=1)).isoformat(),
+        }
+
+        response = self.client.post("/api/v1/events/", payload, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        event = Event.objects.get(pk=response.data["id"])
+        self.assertEqual(event.event_type, "Ceremony")
+
+    def test_event_admin_form_shows_suggestions_and_accepts_custom_type(self):
+        now = timezone.now()
+        form = EventAdminForm(
+            data={
+                "workspace": self.workspace.pk,
+                "title": "Workshop",
+                "event_type": "Workshop",
+                "starts_at": now,
+                "ends_at": now + timedelta(hours=1),
+                "created_by": self.user.pk,
+            }
+        )
+
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertIn("datalist", str(form["event_type"]))
+        self.assertIn("Meeting", str(form["event_type"]))
 
     def test_analytics_requires_workspace(self):
         response = self.client.get("/api/v1/analytics/")

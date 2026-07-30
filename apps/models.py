@@ -151,7 +151,7 @@ class Event(TimeStampedModel):
 
     workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name="events")
     title = models.CharField(max_length=180)
-    event_type = models.CharField(max_length=12, choices=Type.choices, default=Type.MEETING)
+    event_type = models.CharField(max_length=80, default=Type.MEETING)
     description = models.TextField(blank=True)
     starts_at = models.DateTimeField()
     ends_at = models.DateTimeField()
@@ -247,7 +247,7 @@ class TimeEntry(TimeStampedModel):
     task = models.ForeignKey(Task, on_delete=models.CASCADE, related_name="time_entries")
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="time_entries")
     started_at = models.DateTimeField()
-    ended_at = models.DateTimeField()
+    ended_at = models.DateTimeField(null=True, blank=True)
     note = models.CharField(max_length=250, blank=True)
 
     class Meta:

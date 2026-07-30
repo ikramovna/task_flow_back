@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from import_export.admin import ImportExportMixin, ImportExportModelAdmin
 
-from .forms import BulkMembershipAdminForm
+from .forms import BulkMembershipAdminForm, EventAdminForm
 from .models import Conversation, ConversationParticipant, Department, Event, FAQ, Membership, Message, Project, Report, SupportTicket, Task, TimeEntry, User, UserPreference, Workspace
 from .resources import (
     ConversationParticipantResource,
@@ -137,6 +137,7 @@ class TaskAdmin(ImportExportModelAdmin):
 
 @admin.register(Event)
 class EventAdmin(ImportExportModelAdmin):
+    form = EventAdminForm
     resource_classes = (EventResource,)
     list_display = ("title", "workspace", "event_type", "starts_at", "ends_at", "location")
     list_filter = ("event_type", "workspace", "starts_at")
