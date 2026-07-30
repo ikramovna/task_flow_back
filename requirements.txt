@@ -9,3 +9,4 @@ django-import-export==4.3.9
 openpyxl==3.1.5
 Pillow==11.3.0
 python-dotenv==1.1.1
+psycopg[binary]==3.2.9
