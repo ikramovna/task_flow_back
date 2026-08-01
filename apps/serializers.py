@@ -46,6 +46,8 @@ class MembershipSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         workspace = attrs.get("workspace", getattr(self.instance, "workspace", None))
         department = attrs.get("department", getattr(self.instance, "department", None))
+        if self.instance is None and not department:
+            raise serializers.ValidationError({"department": "This field is required."})
         if department and workspace and department.workspace_id != workspace.id:
             raise serializers.ValidationError({"department": "Department must belong to the selected workspace."})
         return attrs

@@ -116,6 +116,12 @@ class MembershipViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
     search_fields = ("user__first_name", "user__last_name", "user__email", "user__job_title")
     ordering_fields = ("joined_at", "user__first_name")
 
+    manager_roles = (
+        Membership.Role.OWNER,
+        Membership.Role.ADMIN,
+        Membership.Role.MANAGER,
+    )
+
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return self.queryset
@@ -123,7 +129,19 @@ class MembershipViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
         return qs.filter(workspace_id=self.workspace_id()) if self.workspace_id() else qs
 
     def perform_create(self, serializer):
-        self.ensure_member(serializer.validated_data["workspace"])
+        workspace = serializer.validated_data["workspace"]
+        department = serializer.validated_data["department"]
+        can_add_member = Membership.objects.filter(
+            workspace=workspace,
+            department=department,
+            user=self.request.user,
+            is_active=True,
+            role__in=self.manager_roles,
+        ).exists()
+        if not can_add_member:
+            raise PermissionDenied(
+                "Only an Owner, Admin, or Manager of this department can add members."
+            )
         serializer.save()
 
     @action(detail=False, methods=["get"])

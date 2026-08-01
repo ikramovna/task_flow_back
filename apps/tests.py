@@ -63,6 +63,131 @@ class TaskFlowAPITests(APITestCase):
         membership.refresh_from_db()
         self.assertEqual(membership.department, department)
 
+    def test_owner_can_add_member_to_own_department(self):
+        new_user = User.objects.create_user(
+            username="new-member",
+            email="new-member@example.com",
+            password="StrongPass123",
+        )
+
+        response = self.client.post(
+            "/api/v1/members/",
+            {
+                "workspace": str(self.workspace.pk),
+                "department": str(self.department.pk),
+                "user": new_user.pk,
+                "role": Membership.Role.MEMBER,
+                "is_active": True,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(
+            Membership.objects.filter(
+                workspace=self.workspace,
+                department=self.department,
+                user=new_user,
+                role=Membership.Role.MEMBER,
+            ).exists()
+        )
+
+    def test_member_cannot_add_member(self):
+        new_user = User.objects.create_user(
+            username="blocked-member",
+            email="blocked-member@example.com",
+            password="StrongPass123",
+        )
+        self.client.force_authenticate(self.other)
+
+        response = self.client.post(
+            "/api/v1/members/",
+            {
+                "workspace": str(self.workspace.pk),
+                "department": str(self.department.pk),
+                "user": new_user.pk,
+                "role": Membership.Role.MEMBER,
+                "is_active": True,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertFalse(
+            Membership.objects.filter(workspace=self.workspace, user=new_user).exists()
+        )
+
+    def test_manager_cannot_add_member_to_another_department(self):
+        manager = User.objects.create_user(
+            username="department-manager",
+            email="department-manager@example.com",
+            password="StrongPass123",
+        )
+        new_user = User.objects.create_user(
+            username="cross-department-member",
+            email="cross-department-member@example.com",
+            password="StrongPass123",
+        )
+        other_department = Department.objects.create(
+            workspace=self.workspace,
+            name="Finance",
+            code="finance",
+        )
+        Membership.objects.create(
+            workspace=self.workspace,
+            department=self.department,
+            user=manager,
+            role=Membership.Role.MANAGER,
+        )
+        self.client.force_authenticate(manager)
+
+        response = self.client.post(
+            "/api/v1/members/",
+            {
+                "workspace": str(self.workspace.pk),
+                "department": str(other_department.pk),
+                "user": new_user.pk,
+                "role": Membership.Role.MEMBER,
+                "is_active": True,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_manager_can_add_member_to_own_department(self):
+        manager = User.objects.create_user(
+            username="own-department-manager",
+            email="own-department-manager@example.com",
+            password="StrongPass123",
+        )
+        new_user = User.objects.create_user(
+            username="manager-added-member",
+            email="manager-added-member@example.com",
+            password="StrongPass123",
+        )
+        Membership.objects.create(
+            workspace=self.workspace,
+            department=self.department,
+            user=manager,
+            role=Membership.Role.MANAGER,
+        )
+        self.client.force_authenticate(manager)
+
+        response = self.client.post(
+            "/api/v1/members/",
+            {
+                "workspace": str(self.workspace.pk),
+                "department": str(self.department.pk),
+                "user": new_user.pk,
+                "role": Membership.Role.MEMBER,
+                "is_active": True,
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
     def test_membership_rejects_department_from_another_workspace(self):
         other_workspace = Workspace.objects.create(name="Other", slug="other", owner=self.user)
         other_department = Department.objects.create(
