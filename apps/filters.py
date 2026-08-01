@@ -15,7 +15,7 @@ class TaskFilter(django_filters.FilterSet):
 class ProjectFilter(django_filters.FilterSet):
     class Meta:
         model = Project
-        fields = ("status", "priority", "members")
+        fields = ("department", "status", "priority", "members")
 
 
 class EventFilter(django_filters.FilterSet):
@@ -25,4 +25,3 @@ class EventFilter(django_filters.FilterSet):
     class Meta:
         model = Event
         fields = ("event_type", "attendees")
-

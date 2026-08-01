@@ -3,7 +3,7 @@ from datetime import date, datetime, time, timedelta
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
-from apps.models import Conversation, ConversationParticipant, Event, FAQ, Membership, Message, Project, Report, Task, User, UserPreference, Workspace
+from apps.models import Conversation, ConversationParticipant, Department, Event, FAQ, Membership, Message, Project, Report, Task, User, UserPreference, Workspace
 
 
 class Command(BaseCommand):
@@ -15,7 +15,19 @@ class Command(BaseCommand):
         owner.save()
         UserPreference.objects.get_or_create(user=owner)
         workspace, _ = Workspace.objects.get_or_create(slug="taskflow-demo", defaults={"name": "TaskFlow Demo", "owner": owner})
-        Membership.objects.get_or_create(workspace=workspace, user=owner, defaults={"role": Membership.Role.OWNER})
+        department, _ = Department.objects.get_or_create(
+            workspace=workspace,
+            code="engineering",
+            defaults={"name": "Engineering"},
+        )
+        owner_membership, _ = Membership.objects.get_or_create(
+            workspace=workspace,
+            user=owner,
+            defaults={"role": Membership.Role.OWNER, "department": department},
+        )
+        if owner_membership.department_id is None:
+            owner_membership.department = department
+            owner_membership.save(update_fields=["department", "updated_at"])
 
         people = [
             ("sarah@taskflow.local", "Sarah", "Johnson", "Senior Developer"),
@@ -27,7 +39,14 @@ class Command(BaseCommand):
         members = []
         for index, (email, first, last, title) in enumerate(people):
             user, _ = User.objects.get_or_create(email=email, defaults={"username": f"demo-{index}", "first_name": first, "last_name": last, "job_title": title})
-            Membership.objects.get_or_create(workspace=workspace, user=user)
+            membership, _ = Membership.objects.get_or_create(
+                workspace=workspace,
+                user=user,
+                defaults={"department": department},
+            )
+            if membership.department_id is None:
+                membership.department = department
+                membership.save(update_fields=["department", "updated_at"])
             members.append(user)
 
         projects_data = [
@@ -40,7 +59,10 @@ class Command(BaseCommand):
         ]
         projects = []
         for name, project_status, priority, days in projects_data:
-            project, _ = Project.objects.get_or_create(workspace=workspace, name=name, defaults={"status": project_status, "priority": priority, "due_date": date.today() + timedelta(days=days), "created_by": owner})
+            project, _ = Project.objects.get_or_create(workspace=workspace, name=name, defaults={"department": department, "status": project_status, "priority": priority, "due_date": date.today() + timedelta(days=days), "created_by": owner})
+            if project.department_id is None:
+                project.department = department
+                project.save(update_fields=["department", "updated_at"])
             project.members.set(members[:3])
             projects.append(project)
 

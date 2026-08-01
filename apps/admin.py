@@ -116,10 +116,10 @@ class MembershipAdmin(ImportExportModelAdmin):
 @admin.register(Project)
 class ProjectAdmin(ImportExportModelAdmin):
     resource_classes = (ProjectResource,)
-    list_display = ("name", "workspace", "status", "priority", "progress", "due_date", "created_by")
-    list_filter = ("status", "priority", "workspace", "due_date")
+    list_display = ("name", "workspace", "department", "status", "priority", "progress", "due_date", "created_by")
+    list_filter = ("status", "priority", "workspace", "department", "due_date")
     search_fields = ("name", "description", "workspace__name", "created_by__email")
-    autocomplete_fields = ("workspace", "members", "created_by")
+    autocomplete_fields = ("workspace", "department", "members", "created_by")
     readonly_fields = ("created_at", "updated_at", "progress")
     date_hierarchy = "created_at"
 

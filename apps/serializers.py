@@ -91,15 +91,28 @@ class ProjectSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Project
-        fields = ("id", "workspace", "name", "description", "status", "priority", "start_date", "due_date", "members", "member_details", "created_by", "progress", "task_count", "completed_task_count", "created_at", "updated_at")
+        fields = ("id", "workspace", "department", "name", "description", "status", "priority", "start_date", "due_date", "members", "member_details", "created_by", "progress", "task_count", "completed_task_count", "created_at", "updated_at")
         read_only_fields = ("created_by",)
 
     def validate(self, attrs):
         workspace = attrs.get("workspace") or self.instance.workspace
+        department = attrs.get("department", getattr(self.instance, "department", None))
+        if not department:
+            raise serializers.ValidationError({"department": "This field is required."})
+        if department.workspace_id != workspace.id:
+            raise serializers.ValidationError({"department": "Department must belong to the project workspace."})
         users = attrs.get("members", [])
-        invalid = [u.id for u in users if not u.memberships.filter(workspace=workspace, is_active=True).exists()]
+        invalid = [
+            u.id
+            for u in users
+            if not u.memberships.filter(
+                workspace=workspace,
+                department=department,
+                is_active=True,
+            ).exists()
+        ]
         if invalid:
-            raise serializers.ValidationError({"members": "Every project member must belong to the workspace."})
+            raise serializers.ValidationError({"members": "Every project member must belong to the project department."})
         return attrs
 
 
@@ -115,8 +128,12 @@ class TaskSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         project = attrs.get("project") or self.instance.project
         for user in attrs.get("assignees", []):
-            if not user.memberships.filter(workspace=project.workspace, is_active=True).exists():
-                raise serializers.ValidationError({"assignees": "Every assignee must belong to the project workspace."})
+            if not user.memberships.filter(
+                workspace=project.workspace,
+                department=project.department,
+                is_active=True,
+            ).exists():
+                raise serializers.ValidationError({"assignees": "Every assignee must belong to the project department."})
         return attrs
 
 

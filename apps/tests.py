@@ -21,9 +21,14 @@ class TaskFlowAPITests(APITestCase):
         self.user = User.objects.create_user(username="sarah", email="sarah@example.com", password="StrongPass123")
         self.other = User.objects.create_user(username="mike", email="mike@example.com", password="StrongPass123")
         self.workspace = Workspace.objects.create(name="Acme", slug="acme", owner=self.user)
-        Membership.objects.create(workspace=self.workspace, user=self.user, role=Membership.Role.OWNER)
-        Membership.objects.create(workspace=self.workspace, user=self.other)
-        self.project = Project.objects.create(workspace=self.workspace, name="Website", created_by=self.user, status=Project.Status.IN_PROGRESS)
+        self.department = Department.objects.create(
+            workspace=self.workspace,
+            name="Engineering",
+            code="engineering",
+        )
+        Membership.objects.create(workspace=self.workspace, department=self.department, user=self.user, role=Membership.Role.OWNER)
+        Membership.objects.create(workspace=self.workspace, department=self.department, user=self.other)
+        self.project = Project.objects.create(workspace=self.workspace, department=self.department, name="Website", created_by=self.user, status=Project.Status.IN_PROGRESS)
         self.client.force_authenticate(self.user)
 
     def test_workspace_isolation(self):
@@ -102,6 +107,7 @@ class TaskFlowAPITests(APITestCase):
         )
         Membership.objects.create(
             workspace=self.workspace,
+            department=self.department,
             user=manager,
             role=Membership.Role.MANAGER,
         )
@@ -125,7 +131,7 @@ class TaskFlowAPITests(APITestCase):
             {"title": "Edited by member"},
             format="json",
         )
-        self.assertEqual(member_response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(member_response.status_code, status.HTTP_404_NOT_FOUND)
 
         task.refresh_from_db()
         self.assertEqual(task.title, "Edited by manager")
@@ -176,6 +182,74 @@ class TaskFlowAPITests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["count"], 1)
         self.assertEqual(response.data["results"][0]["id"], str(assigned.pk))
+
+    def test_member_task_list_always_returns_only_assigned_tasks(self):
+        assigned = Task.objects.create(
+            project=self.project,
+            title="Assigned",
+            created_by=self.user,
+        )
+        assigned.assignees.add(self.other)
+        Task.objects.create(
+            project=self.project,
+            title="Not assigned",
+            created_by=self.user,
+        )
+        self.client.force_authenticate(self.other)
+
+        response = self.client.get("/api/v1/tasks/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["id"], str(assigned.pk))
+
+    def test_department_access_isolation_for_projects_and_tasks(self):
+        other_department = Department.objects.create(
+            workspace=self.workspace,
+            name="Finance",
+            code="finance",
+        )
+        other_manager = User.objects.create_user(
+            username="finance-manager",
+            email="finance-manager@example.com",
+            password="StrongPass123",
+        )
+        Membership.objects.create(
+            workspace=self.workspace,
+            department=other_department,
+            user=other_manager,
+            role=Membership.Role.MANAGER,
+        )
+        hidden_project = Project.objects.create(
+            workspace=self.workspace,
+            department=other_department,
+            name="Budget",
+            created_by=other_manager,
+        )
+        hidden_task = Task.objects.create(
+            project=hidden_project,
+            title="Prepare budget",
+            created_by=other_manager,
+        )
+
+        projects = self.client.get("/api/v1/projects/")
+        tasks = self.client.get("/api/v1/tasks/")
+
+        self.assertNotIn(str(hidden_project.pk), [row["id"] for row in projects.data["results"]])
+        self.assertNotIn(str(hidden_task.pk), [row["id"] for row in tasks.data["results"]])
+
+    def test_member_cannot_manage_project(self):
+        self.client.force_authenticate(self.other)
+
+        updated = self.client.patch(
+            f"/api/v1/projects/{self.project.pk}/",
+            {"name": "Changed by member"},
+            format="json",
+        )
+        deleted = self.client.delete(f"/api/v1/projects/{self.project.pk}/")
+
+        self.assertEqual(updated.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(deleted.status_code, status.HTTP_403_FORBIDDEN)
 
     def test_member_can_start_and_stop_timer_for_assigned_task(self):
         task = Task.objects.create(

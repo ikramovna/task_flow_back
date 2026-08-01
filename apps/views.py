@@ -8,7 +8,7 @@ from django.conf import settings
 from django.contrib.auth.tokens import default_token_generator
 from django.http import FileResponse
 from django.db import transaction
-from django.db.models import Count, Q
+from django.db.models import Count, F, Q
 from django.db.models.functions import TruncMonth
 from django.utils import timezone
 from django.utils.encoding import force_bytes
@@ -168,15 +168,51 @@ class ProjectViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
     search_fields = ("name", "description")
     ordering_fields = ("name", "due_date", "created_at", "status")
 
+    manager_roles = (
+        Membership.Role.OWNER,
+        Membership.Role.ADMIN,
+        Membership.Role.MANAGER,
+    )
+
+    def ensure_project_manager(self, workspace, department):
+        allowed = Membership.objects.filter(
+            workspace=workspace,
+            department=department,
+            user=self.request.user,
+            is_active=True,
+            role__in=self.manager_roles,
+        ).exists()
+        if not allowed:
+            raise PermissionDenied(
+                "Only an Owner, Admin, or Manager of this department can manage projects."
+            )
+
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return self.queryset
-        qs = Project.objects.filter(workspace__memberships__user=self.request.user, workspace__memberships__is_active=True).select_related("workspace", "created_by").prefetch_related("members").annotate(task_count=Count("tasks", distinct=True), completed_task_count=Count("tasks", filter=Q(tasks__status=Task.Status.COMPLETED), distinct=True)).distinct()
+        qs = Project.objects.filter(
+            department__memberships__user=self.request.user,
+            department__memberships__workspace_id=F("workspace_id"),
+            department__memberships__is_active=True,
+        ).select_related("workspace", "department", "created_by").prefetch_related("members").annotate(task_count=Count("tasks", distinct=True), completed_task_count=Count("tasks", filter=Q(tasks__status=Task.Status.COMPLETED), distinct=True)).order_by("-created_at").distinct()
         return qs.filter(workspace_id=self.workspace_id()) if self.workspace_id() else qs
 
     def perform_create(self, serializer):
-        self.ensure_member(serializer.validated_data["workspace"])
+        self.ensure_project_manager(
+            serializer.validated_data["workspace"],
+            serializer.validated_data["department"],
+        )
         serializer.save(created_by=self.request.user)
+
+    def perform_update(self, serializer):
+        workspace = serializer.validated_data.get("workspace", serializer.instance.workspace)
+        department = serializer.validated_data.get("department", serializer.instance.department)
+        self.ensure_project_manager(workspace, department)
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        self.ensure_project_manager(instance.workspace, instance.department)
+        instance.delete()
 
     @action(detail=False, methods=["get"])
     def summary(self, request):
@@ -195,7 +231,28 @@ class TaskViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return self.queryset
-        qs = Task.objects.filter(project__workspace__memberships__user=self.request.user, project__workspace__memberships__is_active=True).select_related("project", "created_by").prefetch_related("assignees").distinct()
+        memberships = Membership.objects.filter(
+            user=self.request.user,
+            is_active=True,
+            department__isnull=False,
+        )
+        manager_department_ids = memberships.filter(
+            role__in=(
+                Membership.Role.OWNER,
+                Membership.Role.ADMIN,
+                Membership.Role.MANAGER,
+            )
+        ).values("department_id")
+        member_department_ids = memberships.filter(
+            role=Membership.Role.MEMBER,
+        ).values("department_id")
+        qs = Task.objects.filter(
+            Q(project__department_id__in=manager_department_ids)
+            | Q(
+                project__department_id__in=member_department_ids,
+                assignees=self.request.user,
+            )
+        ).select_related("project", "project__department", "created_by").prefetch_related("assignees").distinct()
         if self.workspace_id():
             qs = qs.filter(project__workspace_id=self.workspace_id())
         if self.request.query_params.get("my_tasks", "").lower() in ("1", "true", "yes"):
@@ -204,12 +261,13 @@ class TaskViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         project = serializer.validated_data["project"]
-        self.ensure_workspace_task_manager(project.workspace)
+        self.ensure_workspace_task_manager(project.workspace, project.department)
         serializer.save(created_by=self.request.user)
 
-    def ensure_workspace_task_manager(self, workspace):
+    def ensure_workspace_task_manager(self, workspace, department):
         can_manage = workspace.memberships.filter(
             user=self.request.user,
+            department=department,
             is_active=True,
             role__in=(
                 Membership.Role.OWNER,
@@ -223,12 +281,13 @@ class TaskViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
             )
 
     def ensure_task_manager(self, task):
-        self.ensure_workspace_task_manager(task.project.workspace)
+        self.ensure_workspace_task_manager(task.project.workspace, task.project.department)
 
     def perform_update(self, serializer):
         task = serializer.instance
         membership = task.project.workspace.memberships.filter(
             user=self.request.user,
+            department=task.project.department,
             is_active=True,
         ).first()
         if not membership:
@@ -265,6 +324,7 @@ class TaskViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
     def ensure_timer_access(self, task):
         membership = task.project.workspace.memberships.filter(
             user=self.request.user,
+            department=task.project.department,
             is_active=True,
         ).first()
         if not membership:

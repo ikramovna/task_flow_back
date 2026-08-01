@@ -97,6 +97,13 @@ class Project(TimeStampedModel):
         HIGH = "high", "High"
 
     workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name="projects")
+    department = models.ForeignKey(
+        Department,
+        on_delete=models.PROTECT,
+        related_name="projects",
+        null=True,
+        blank=True,
+    )
     name = models.CharField(max_length=180)
     description = models.TextField(blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.NOT_STARTED)
