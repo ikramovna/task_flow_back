@@ -10,7 +10,6 @@ from .models import (
     Message,
     Report,
     Task,
-    TimeEntry,
     User,
     UserPreference,
 )
@@ -104,9 +103,4 @@ class MessageResource(TaskFlowResource):
 class ReportResource(TaskFlowResource):
     class Meta(TaskFlowResource.Meta):
         model = Report
-
-
-class TimeEntryResource(TaskFlowResource):
-    class Meta(TaskFlowResource.Meta):
-        model = TimeEntry
 

@@ -35,6 +35,10 @@ class DepartmentScopedApiTests(APITestCase):
         response = self.client.get("/api/v1/support-tickets/")
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
+    def test_time_entry_endpoint_is_removed(self):
+        response = self.client.get("/api/v1/time-entries/")
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
     def test_departments_are_top_level_resources(self):
         response = self.client.get("/api/v1/departments/")
         self.assertEqual(response.status_code, status.HTTP_200_OK)

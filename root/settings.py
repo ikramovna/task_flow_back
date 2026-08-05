@@ -213,7 +213,6 @@ JAZZMIN_SETTINGS = {
         "apps.ConversationParticipant": "fas fa-user-group",
         "apps.Message": "fas fa-message",
         "apps.Report": "fas fa-chart-column",
-        "apps.TimeEntry": "fas fa-clock",
     },
     "order_with_respect_to": [
         "apps",
@@ -221,7 +220,6 @@ JAZZMIN_SETTINGS = {
         "apps.Task",
         "apps.Event",
         "apps.User",
-        "apps.TimeEntry",
         "apps.Report",
         "auth",
     ],

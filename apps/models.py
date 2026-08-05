@@ -176,20 +176,3 @@ class Report(TimeStampedModel):
     class Meta:
         ordering = ["-created_at"]
 
-
-class TimeEntry(TimeStampedModel):
-    task = models.ForeignKey(Task, on_delete=models.CASCADE, related_name="time_entries")
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="time_entries")
-    started_at = models.DateTimeField()
-    ended_at = models.DateTimeField(null=True, blank=True)
-    note = models.CharField(max_length=250, blank=True)
-
-    class Meta:
-        ordering = ["-started_at"]
-
-    @property
-    def minutes(self):
-        if not self.started_at or not self.ended_at:
-            return 0
-        return max(0, round((self.ended_at - self.started_at).total_seconds() / 60))
-

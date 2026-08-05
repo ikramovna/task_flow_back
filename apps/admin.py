@@ -3,7 +3,7 @@ from django.contrib.auth.admin import UserAdmin
 from import_export.admin import ImportExportMixin, ImportExportModelAdmin
 
 from .forms import EventAdminForm
-from .models import Conversation, ConversationParticipant, Department, Event, Message, Report, Task, TimeEntry, User, UserPreference
+from .models import Conversation, ConversationParticipant, Department, Event, Message, Report, Task, User, UserPreference
 from .resources import (
     ConversationParticipantResource,
     ConversationResource,
@@ -12,7 +12,6 @@ from .resources import (
     MessageResource,
     ReportResource,
     TaskResource,
-    TimeEntryResource,
     UserPreferenceResource,
     UserResource,
 )
@@ -132,17 +131,6 @@ class ReportAdmin(ImportExportModelAdmin):
     autocomplete_fields = ("department", "generated_by")
     readonly_fields = ("created_at", "updated_at")
     date_hierarchy = "created_at"
-
-
-@admin.register(TimeEntry)
-class TimeEntryAdmin(ImportExportModelAdmin):
-    resource_classes = (TimeEntryResource,)
-    list_display = ("task", "user", "started_at", "ended_at", "minutes")
-    list_filter = ("started_at", "user")
-    search_fields = ("task__title", "user__email", "note")
-    autocomplete_fields = ("task", "user")
-    readonly_fields = ("created_at", "updated_at", "minutes")
-    date_hierarchy = "started_at"
 
 
 admin.site.site_header = "TaskFlow Administration"

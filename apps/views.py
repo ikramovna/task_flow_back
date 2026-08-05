@@ -23,10 +23,10 @@ from rest_framework.views import APIView
 from drf_spectacular.utils import extend_schema, inline_serializer
 
 from .filters import EventFilter, TaskFilter
-from .models import Conversation, ConversationParticipant, Department, Event, Message, Report, Task, TimeEntry, User, UserPreference
+from .models import Conversation, ConversationParticipant, Department, Event, Message, Report, Task, User, UserPreference
 from .pagination import StandardPagination
 from .permissions import IsDepartmentMember
-from .serializers import AccountDeleteSerializer, ConversationSerializer, DepartmentSerializer, EventSerializer, MemberSerializer, MessageSerializer, PasswordChangeSerializer, PasswordResetConfirmSerializer, PasswordResetRequestSerializer, ProfileSerializer, ReportSerializer, TaskSerializer, TimeEntrySerializer, TwoFactorSerializer, UserPreferenceSerializer
+from .serializers import AccountDeleteSerializer, ConversationSerializer, DepartmentSerializer, EventSerializer, MemberSerializer, MessageSerializer, PasswordChangeSerializer, PasswordResetConfirmSerializer, PasswordResetRequestSerializer, ProfileSerializer, ReportSerializer, TaskSerializer, TwoFactorSerializer, UserPreferenceSerializer
 
 
 class PasswordResetRequestView(generics.GenericAPIView):
@@ -264,60 +264,6 @@ class TaskViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
         self.ensure_task_manager(instance)
         instance.delete()
 
-    def ensure_timer_access(self, task):
-        user = self.request.user
-        if not user.is_active or not (user.role in (User.Role.OWNER, User.Role.ADMIN) or user.department_id == task.department_id):
-            raise PermissionDenied("You are not a member of this department.")
-        is_manager = user.role in (User.Role.OWNER, User.Role.ADMIN, User.Role.MANAGER)
-        if not is_manager and not task.assignees.filter(pk=self.request.user.pk).exists():
-            raise PermissionDenied("You can track time only for tasks assigned to you.")
-
-    @action(detail=True, methods=["post"], url_path="start-timer")
-    def start_timer(self, request, pk=None):
-        task = self.get_object()
-        self.ensure_timer_access(task)
-        running_entry = TimeEntry.objects.filter(
-            task=task,
-            user=request.user,
-            ended_at__isnull=True,
-        ).first()
-        if running_entry:
-            return Response(
-                {
-                    "detail": "A timer is already running for this task.",
-                    "time_entry": TimeEntrySerializer(running_entry).data,
-                },
-                status=status.HTTP_409_CONFLICT,
-            )
-        entry = TimeEntry.objects.create(
-            task=task,
-            user=request.user,
-            started_at=timezone.now(),
-        )
-        return Response(
-            TimeEntrySerializer(entry).data,
-            status=status.HTTP_201_CREATED,
-        )
-
-    @action(detail=True, methods=["post"], url_path="stop-timer")
-    def stop_timer(self, request, pk=None):
-        task = self.get_object()
-        self.ensure_timer_access(task)
-        entry = TimeEntry.objects.filter(
-            task=task,
-            user=request.user,
-            ended_at__isnull=True,
-        ).order_by("-started_at").first()
-        if not entry:
-            return Response(
-                {"detail": "No running timer was found for this task."},
-                status=status.HTTP_409_CONFLICT,
-            )
-        entry.ended_at = timezone.now()
-        entry.save(update_fields=["ended_at", "updated_at"])
-        return Response(TimeEntrySerializer(entry).data)
-
-
 class EventViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
     queryset = Event.objects.none()
     serializer_class = EventSerializer
@@ -509,7 +455,7 @@ class ReportViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
         self.ensure_member(department)
         report = serializer.save(generated_by=self.request.user)
         tasks = Task.objects.filter(department=department)
-        result = {"tasks": tasks.count(), "completed": tasks.filter(status=Task.Status.COMPLETED).count(), "in_progress": tasks.filter(status=Task.Status.IN_PROGRESS).count(), "members": department.users.filter(is_active=True).count(), "logged_minutes": sum(entry.minutes for entry in TimeEntry.objects.filter(task__department=department))}
+        result = {"tasks": tasks.count(), "completed": tasks.filter(status=Task.Status.COMPLETED).count(), "in_progress": tasks.filter(status=Task.Status.IN_PROGRESS).count(), "members": department.users.filter(is_active=True).count()}
         buffer = io.StringIO()
         writer = csv.writer(buffer)
         writer.writerow(["metric", "value"])
@@ -525,41 +471,4 @@ class ReportViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
         if not report.file:
             return Response({"detail": "Report file is not ready."}, status=status.HTTP_409_CONFLICT)
         return FileResponse(report.file.open("rb"), as_attachment=True, filename=f"{report.name}.csv")
-
-
-class TimeEntryViewSet(viewsets.ModelViewSet):
-    queryset = TimeEntry.objects.none()
-    serializer_class = TimeEntrySerializer
-    permission_classes = (IsAuthenticated,)
-    pagination_class = StandardPagination
-    filter_backends = (DjangoFilterBackend, filters.OrderingFilter)
-    filterset_fields = ("task", "user")
-    ordering_fields = ("started_at", "ended_at")
-
-    def get_queryset(self):
-        if getattr(self, "swagger_fake_view", False):
-            return self.queryset
-        qs = TimeEntry.objects.select_related("task", "user")
-        if self.request.user.role in (User.Role.OWNER, User.Role.ADMIN):
-            return qs
-        return qs.filter(task__department=self.request.user.department).distinct()
-
-    def perform_create(self, serializer):
-        task = serializer.validated_data["task"]
-        if self.request.user.role not in (User.Role.OWNER, User.Role.ADMIN) and self.request.user.department_id != task.department_id:
-            raise serializers.ValidationError({"task": "You are not a member of this department."})
-        serializer.save(user=self.request.user)
-
-    def _ensure_owner_or_manager(self, instance):
-        allowed = self.request.user.is_active and self.request.user.role in (User.Role.OWNER, User.Role.ADMIN, User.Role.MANAGER) and (self.request.user.role in (User.Role.OWNER, User.Role.ADMIN) or self.request.user.department_id == instance.task.department_id)
-        if instance.user != self.request.user and not allowed:
-            raise PermissionDenied("Only the owner or a department manager can change this entry.")
-
-    def perform_update(self, serializer):
-        self._ensure_owner_or_manager(serializer.instance)
-        serializer.save()
-
-    def perform_destroy(self, instance):
-        self._ensure_owner_or_manager(instance)
-        instance.delete()
 

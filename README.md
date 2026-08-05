@@ -30,7 +30,6 @@ All list endpoints support pagination. Tasks, members and events accept `?depart
 | Calendar | `/api/v1/events/` |
 | Analytics | `GET /api/v1/analytics/?department=<uuid>` |
 | Reports | `/api/v1/reports/` and `/api/v1/reports/<id>/download/` |
-| Time tracking | `/api/v1/time-entries/` |
 | Conversations | `/api/v1/conversations/` |
 | Messages | `/api/v1/messages/?conversation=<uuid>` |
 | Profile | `GET/PATCH /api/v1/me/` |

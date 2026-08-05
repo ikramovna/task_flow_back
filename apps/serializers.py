@@ -3,7 +3,7 @@ from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
 from rest_framework import serializers
 
-from .models import Conversation, ConversationParticipant, Department, Event, Message, Report, Task, TimeEntry, User, UserPreference
+from .models import Conversation, ConversationParticipant, Department, Event, Message, Report, Task, User, UserPreference
 
 
 class UserBriefSerializer(serializers.ModelSerializer):
@@ -231,21 +231,4 @@ class ReportSerializer(serializers.ModelSerializer):
         model = Report
         fields = ("id", "department", "name", "report_type", "status", "parameters", "result", "file", "generated_by", "generated_by_detail", "created_at", "updated_at")
         read_only_fields = ("status", "result", "file", "generated_by")
-
-
-class TimeEntrySerializer(serializers.ModelSerializer):
-    user_detail = UserBriefSerializer(source="user", read_only=True)
-    minutes = serializers.IntegerField(read_only=True)
-
-    class Meta:
-        model = TimeEntry
-        fields = ("id", "task", "user", "user_detail", "started_at", "ended_at", "minutes", "note", "created_at")
-        read_only_fields = ("user",)
-
-    def validate(self, attrs):
-        started = attrs.get("started_at", getattr(self.instance, "started_at", None))
-        ended = attrs.get("ended_at", getattr(self.instance, "ended_at", None))
-        if started and ended and ended <= started:
-            raise serializers.ValidationError({"ended_at": "End time must be after start time."})
-        return attrs
 
