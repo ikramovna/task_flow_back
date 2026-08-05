@@ -17,6 +17,7 @@ class TaskFlowAutoSchema(AutoSchema):
         "messages": "Messages",
         "reports": "Reports",
         "analytics": "Analytics",
+        "dashboard": "Dashboard",
     }
 
     def get_tags(self):

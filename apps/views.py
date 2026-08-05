@@ -1,6 +1,6 @@
 import csv
 import io
-from datetime import timedelta
+from datetime import datetime, time, timedelta
 
 from django.core.files.base import ContentFile
 from django.core.mail import send_mail
@@ -26,7 +26,7 @@ from .filters import EventFilter, TaskFilter
 from .models import Conversation, ConversationParticipant, Department, Event, Message, Report, Task, User, UserPreference
 from .pagination import StandardPagination
 from .permissions import IsDepartmentMember
-from .serializers import AccountDeleteSerializer, ConversationSerializer, DepartmentSerializer, EventSerializer, MemberSerializer, MessageSerializer, PasswordChangeSerializer, PasswordResetConfirmSerializer, PasswordResetRequestSerializer, ProfileSerializer, ReportSerializer, TaskSerializer, TwoFactorSerializer, UserPreferenceSerializer
+from .serializers import AccountDeleteSerializer, ConversationSerializer, DepartmentSerializer, EventSerializer, MemberSerializer, MessageSerializer, PasswordChangeSerializer, PasswordResetConfirmSerializer, PasswordResetRequestSerializer, ProfileSerializer, ReportSerializer, TaskSerializer, TwoFactorSerializer, UserBriefSerializer, UserPreferenceSerializer
 
 
 class PasswordResetRequestView(generics.GenericAPIView):
@@ -317,6 +317,124 @@ class AnalyticsView(APIView):
         return Response({"task_completion_rate": completion_rate, "team_velocity": velocity, "overdue_tasks": overdue, "monthly_progress": monthly, "tasks_by_category": categories})
 
 
+class DashboardView(APIView):
+    permission_classes = (IsAuthenticated,)
+
+    @extend_schema(
+        responses=inline_serializer(
+            name="DashboardResponse",
+            fields={
+                "summary": serializers.JSONField(),
+                "today_events": serializers.JSONField(),
+                "upcoming_events": serializers.JSONField(),
+                "upcoming_deadlines": serializers.JSONField(),
+                "tasks_by_department": serializers.JSONField(),
+                "recent_tasks": serializers.JSONField(),
+            },
+        )
+    )
+    def get(self, request):
+        user = request.user
+        tasks = Task.objects.select_related("department", "created_by").prefetch_related("assignees")
+        events = Event.objects.select_related("department", "created_by").prefetch_related("attendees")
+
+        if user.role not in (User.Role.OWNER, User.Role.ADMIN):
+            tasks = tasks.filter(department=user.department)
+            events = events.filter(department=user.department)
+            if user.role == User.Role.MEMBER:
+                tasks = tasks.filter(assignees=user)
+                events = events.filter(attendees=user)
+
+        tasks = tasks.distinct()
+        events = events.distinct()
+        today = timezone.localdate()
+        now = timezone.now()
+        day_start = timezone.make_aware(datetime.combine(today, time.min))
+        day_end = day_start + timedelta(days=1)
+
+        total = tasks.count()
+        completed = tasks.filter(status=Task.Status.COMPLETED).count()
+        in_progress = tasks.filter(status=Task.Status.IN_PROGRESS).count()
+        not_started = tasks.filter(status=Task.Status.NOT_STARTED).count()
+        overdue = tasks.exclude(status=Task.Status.COMPLETED).filter(due_date__lt=today).count()
+
+        def percent(value):
+            return round(value * 100 / total, 1) if total else 0.0
+
+        def event_data(event):
+            attendees = list(event.attendees.all())
+            return {
+                "id": str(event.id),
+                "title": event.title,
+                "event_type": event.event_type,
+                "department": {"id": str(event.department_id), "name": event.department.name} if event.department else None,
+                "starts_at": event.starts_at,
+                "ends_at": event.ends_at,
+                "location": event.location,
+                "meeting_url": event.meeting_url,
+                "attendee_count": len(attendees),
+                "attendees": UserBriefSerializer(attendees[:3], many=True, context={"request": request}).data,
+            }
+
+        today_events = [event_data(event) for event in events.filter(starts_at__gte=day_start, starts_at__lt=day_end).order_by("starts_at")[:4]]
+        upcoming_events = [event_data(event) for event in events.filter(starts_at__gte=day_end).order_by("starts_at")[:4]]
+
+        deadline_items = []
+        for task in tasks.exclude(status=Task.Status.COMPLETED).filter(due_date__gte=today).order_by("due_date", "created_at")[:4]:
+            deadline_items.append({
+                "id": str(task.id),
+                "title": task.title,
+                "department": {"id": str(task.department_id), "name": task.department.name},
+                "priority": task.priority,
+                "status": task.status,
+                "due_date": task.due_date,
+                "days_remaining": (task.due_date - today).days,
+            })
+
+        department_items = list(
+            tasks.values("department_id", "department__name")
+            .annotate(task_count=Count("id"))
+            .order_by("-task_count", "department__name")
+        )
+        tasks_by_department = [
+            {
+                "department_id": str(item["department_id"]),
+                "department_name": item["department__name"],
+                "task_count": item["task_count"],
+                "percentage": percent(item["task_count"]),
+            }
+            for item in department_items
+        ]
+
+        recent_tasks = [
+            {
+                "id": str(task.id),
+                "title": task.title,
+                "department": {"id": str(task.department_id), "name": task.department.name},
+                "status": task.status,
+                "priority": task.priority,
+                "created_at": task.created_at,
+            }
+            for task in tasks.order_by("-created_at")[:5]
+        ]
+
+        return Response({
+            "summary": {
+                "total_tasks": {"count": total, "percentage": 100.0 if total else 0.0},
+                "completed_tasks": {"count": completed, "percentage": percent(completed)},
+                "in_progress_tasks": {"count": in_progress, "percentage": percent(in_progress)},
+                "not_started_tasks": {"count": not_started, "percentage": percent(not_started)},
+                "overdue_tasks": {"count": overdue, "percentage": percent(overdue)},
+            },
+            "today_events": today_events,
+            "upcoming_events": upcoming_events,
+            "upcoming_deadlines": deadline_items,
+            "tasks_by_department": tasks_by_department,
+            "recent_tasks": recent_tasks,
+            "generated_at": now,
+        })
+
+
 class ProfileView(generics.RetrieveUpdateAPIView):
     serializer_class = ProfileSerializer
     permission_classes = (IsAuthenticated,)
@@ -471,4 +589,3 @@ class ReportViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
         if not report.file:
             return Response({"detail": "Report file is not ready."}, status=status.HTTP_409_CONFLICT)
         return FileResponse(report.file.open("rb"), as_attachment=True, filename=f"{report.name}.csv")
-

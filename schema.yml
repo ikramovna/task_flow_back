@@ -271,6 +271,20 @@ paths:
               schema:
                 $ref: '#/components/schemas/Conversation'
           description: ''
+  /api/v1/dashboard/:
+    get:
+      operationId: api_v1_dashboard_retrieve
+      tags:
+      - Dashboard
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardResponse'
+          description: ''
   /api/v1/departments/:
     get:
       operationId: api_v1_departments_list
@@ -1721,6 +1735,22 @@ components:
       - participants
       - unread_count
       - updated_at
+    DashboardResponse:
+      type: object
+      properties:
+        summary: {}
+        today_events: {}
+        upcoming_events: {}
+        upcoming_deadlines: {}
+        tasks_by_department: {}
+        recent_tasks: {}
+      required:
+      - recent_tasks
+      - summary
+      - tasks_by_department
+      - today_events
+      - upcoming_deadlines
+      - upcoming_events
     Department:
       type: object
       properties:

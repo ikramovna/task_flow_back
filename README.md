@@ -24,6 +24,7 @@ All list endpoints support pagination. Tasks, members and events accept `?depart
 |---|---|
 | Login | `POST /api/v1/auth/token/` |
 | Departments | `/api/v1/departments/` |
+| Dashboard | `GET /api/v1/dashboard/` |
 | Tasks | `/api/v1/tasks/` |
 | Team members | `/api/v1/members/` |
 | Team cards | `GET /api/v1/members/summary/?department=<uuid>` |

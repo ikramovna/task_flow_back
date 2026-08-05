@@ -87,6 +87,34 @@ class DepartmentScopedApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["task_completion_rate"], 100)
 
+    def test_dashboard_returns_english_sections(self):
+        Task.objects.create(
+            department=self.department,
+            title="Prepare student list",
+            created_by=self.owner,
+            status=Task.Status.IN_PROGRESS,
+            due_date=timezone.localdate() + timedelta(days=2),
+        )
+        starts_at = timezone.now() + timedelta(hours=1)
+        Event.objects.create(
+            department=self.department,
+            title="Department meeting",
+            starts_at=starts_at,
+            ends_at=starts_at + timedelta(hours=1),
+            created_by=self.owner,
+        )
+
+        response = self.client.get("/api/v1/dashboard/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("summary", response.data)
+        self.assertIn("today_events", response.data)
+        self.assertIn("upcoming_events", response.data)
+        self.assertIn("upcoming_deadlines", response.data)
+        self.assertIn("tasks_by_department", response.data)
+        self.assertIn("recent_tasks", response.data)
+        self.assertEqual(response.data["summary"]["in_progress_tasks"]["count"], 1)
+
     def test_event_attendees_must_belong_to_department(self):
         outsider = User.objects.create_user(
             username="outsider", email="outsider@example.com", password="pass12345"
