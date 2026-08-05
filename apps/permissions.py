@@ -10,4 +10,4 @@ class IsDepartmentMember(BasePermission):
             return True
         if not request.user.is_authenticated:
             return False
-        return request.user.role in ("owner", "admin") or str(request.user.department_id) == str(department_id)
+        return request.user.role in ("owner", "admin", "manager") or str(request.user.department_id) == str(department_id)

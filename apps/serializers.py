@@ -88,8 +88,8 @@ class TaskSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Task
-        fields = ("id", "department", "title", "description", "status", "priority", "category", "assignees", "assignee_details", "created_by", "due_date", "completed_at", "progress", "created_at", "updated_at")
-        read_only_fields = ("created_by", "completed_at")
+        fields = ("id", "department", "title", "description", "status", "priority", "category", "assignees", "assignee_details", "created_by", "due_date", "completed_at", "is_archived", "archived_at", "archived_by", "progress", "created_at", "updated_at")
+        read_only_fields = ("created_by", "completed_at", "is_archived", "archived_at", "archived_by")
 
     def validate(self, attrs):
         department = attrs.get("department") or self.instance.department
@@ -231,4 +231,3 @@ class ReportSerializer(serializers.ModelSerializer):
         model = Report
         fields = ("id", "department", "name", "report_type", "status", "parameters", "result", "file", "generated_by", "generated_by_detail", "created_at", "updated_at")
         read_only_fields = ("status", "result", "file", "generated_by")
-

@@ -59,6 +59,114 @@ class DepartmentScopedApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertNotIn("project", response.data)
 
+    def test_manager_has_admin_access_across_departments(self):
+        other_department = Department.objects.create(name="Finance", code="finance")
+        manager = User.objects.create_user(
+            username="manager",
+            email="manager@example.com",
+            password="pass12345",
+            department=self.department,
+            role=User.Role.MANAGER,
+        )
+        self.client.force_authenticate(manager)
+
+        response = self.client.post(
+            "/api/v1/tasks/",
+            {"department": other_department.pk, "title": "Prepare budget"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(str(response.data["department"]), str(other_department.pk))
+        self.assertEqual(self.client.get("/api/v1/departments/").data["count"], 2)
+
+    def test_manager_sees_only_assigned_or_self_created_tasks(self):
+        manager = User.objects.create_user(
+            username="manager-tasks",
+            email="manager-tasks@example.com",
+            password="pass12345",
+            department=self.department,
+            role=User.Role.MANAGER,
+        )
+        assigned = Task.objects.create(
+            department=self.department,
+            title="Assigned to manager",
+            created_by=self.owner,
+        )
+        assigned.assignees.add(manager)
+        Task.objects.create(
+            department=self.department,
+            title="Created by manager",
+            created_by=manager,
+        )
+        Task.objects.create(
+            department=self.department,
+            title="Unrelated task",
+            created_by=self.owner,
+        )
+        self.client.force_authenticate(manager)
+
+        response = self.client.get("/api/v1/tasks/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            {item["title"] for item in response.data["results"]},
+            {"Assigned to manager", "Created by manager"},
+        )
+
+    def test_member_cannot_archive_assigned_completed_task(self):
+        task = Task.objects.create(
+            department=self.department,
+            title="Completed member task",
+            created_by=self.owner,
+            status=Task.Status.COMPLETED,
+        )
+        task.assignees.add(self.member)
+        self.client.force_authenticate(self.member)
+
+        response = self.client.post(f"/api/v1/tasks/{task.pk}/archive/")
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        task.refresh_from_db()
+        self.assertFalse(task.is_archived)
+
+    def test_manager_can_archive_completed_task_and_list_archive(self):
+        manager = User.objects.create_user(
+            username="archive-manager",
+            email="archive-manager@example.com",
+            password="pass12345",
+            department=self.department,
+            role=User.Role.MANAGER,
+        )
+        task = Task.objects.create(
+            department=self.department,
+            title="Manager completed task",
+            created_by=manager,
+            status=Task.Status.COMPLETED,
+        )
+        self.client.force_authenticate(manager)
+
+        response = self.client.post(f"/api/v1/tasks/{task.pk}/archive/")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data["is_archived"])
+        self.assertEqual(self.client.get("/api/v1/tasks/").data["count"], 0)
+        archived = self.client.get("/api/v1/tasks/", {"archived": "true"})
+        self.assertEqual(archived.data["count"], 1)
+
+    def test_task_accepts_backlog_and_on_hold_statuses(self):
+        for task_status in (Task.Status.BACKLOG, Task.Status.ON_HOLD):
+            response = self.client.post(
+                "/api/v1/tasks/",
+                {
+                    "department": self.department.pk,
+                    "title": f"Task {task_status}",
+                    "status": task_status,
+                },
+                format="json",
+            )
+            self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+
     def test_member_can_only_be_created_for_department(self):
         response = self.client.post(
             "/api/v1/members/",

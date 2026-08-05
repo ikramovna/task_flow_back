@@ -91,7 +91,7 @@ class DepartmentScopedMixin:
 
     def ensure_member(self, department):
         user = self.request.user
-        if not user.is_active or not (user.role in (User.Role.OWNER, User.Role.ADMIN) or user.department_id == department.id):
+        if not user.is_active or not (user.role in (User.Role.OWNER, User.Role.ADMIN, User.Role.MANAGER) or user.department_id == department.id):
             raise serializers.ValidationError({"department": "You are not a member of this department."})
 
 
@@ -114,8 +114,7 @@ class MemberViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
         return current.is_superuser or (
             current.is_active
             and (
-                current.role in (User.Role.OWNER, User.Role.ADMIN)
-                or (department is not None and current.role == User.Role.MANAGER and current.department_id == department.id)
+                current.role in (User.Role.OWNER, User.Role.ADMIN, User.Role.MANAGER)
             )
         )
 
@@ -124,7 +123,7 @@ class MemberViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
             return self.queryset
         qs = User.objects.select_related("department")
         if not self.request.user.is_superuser:
-            qs = qs if self.request.user.role in self.manager_roles[:2] else qs.filter(department=self.request.user.department)
+            qs = qs if self.request.user.role in self.manager_roles else qs.filter(department=self.request.user.department)
         return qs.filter(department_id=self.department_id()) if self.department_id() else qs
 
     def perform_create(self, serializer):
@@ -139,8 +138,6 @@ class MemberViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
         department = serializer.validated_data.get("department", serializer.instance.department)
         if not self.can_manage(department):
             raise PermissionDenied("Only an Owner, Admin, or Manager of this department can update members.")
-        if self.request.user.role == User.Role.MANAGER and serializer.validated_data.get("role", serializer.instance.role) != User.Role.MEMBER:
-            raise PermissionDenied("Managers can only manage regular members.")
         serializer.save()
 
     def perform_destroy(self, instance):
@@ -172,23 +169,23 @@ class DepartmentViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
         qs = Department.objects.annotate(
             member_count=Count("users", filter=Q(users__is_active=True))
         ).order_by("name").distinct()
-        if self.request.user.is_superuser or self.request.user.role in (User.Role.OWNER, User.Role.ADMIN):
+        if self.request.user.is_superuser or self.request.user.role in (User.Role.OWNER, User.Role.ADMIN, User.Role.MANAGER):
             return qs
         return qs.filter(pk=self.request.user.department_id)
 
     def perform_create(self, serializer):
-        if not (self.request.user.is_superuser or self.request.user.role in (User.Role.OWNER, User.Role.ADMIN)):
-            raise PermissionDenied("Only an Owner or Admin can create departments.")
+        if not (self.request.user.is_superuser or self.request.user.role in (User.Role.OWNER, User.Role.ADMIN, User.Role.MANAGER)):
+            raise PermissionDenied("Only an Owner, Admin, or Manager can create departments.")
         serializer.save()
 
     def perform_update(self, serializer):
-        if not (self.request.user.is_superuser or self.request.user.role in (User.Role.OWNER, User.Role.ADMIN)):
-            raise PermissionDenied("Only an Owner or Admin can update departments.")
+        if not (self.request.user.is_superuser or self.request.user.role in (User.Role.OWNER, User.Role.ADMIN, User.Role.MANAGER)):
+            raise PermissionDenied("Only an Owner, Admin, or Manager can update departments.")
         serializer.save()
 
     def perform_destroy(self, instance):
-        if not (self.request.user.is_superuser or self.request.user.role in (User.Role.OWNER, User.Role.ADMIN)):
-            raise PermissionDenied("Only an Owner or Admin can delete departments.")
+        if not (self.request.user.is_superuser or self.request.user.role in (User.Role.OWNER, User.Role.ADMIN, User.Role.MANAGER)):
+            raise PermissionDenied("Only an Owner, Admin, or Manager can delete departments.")
         instance.delete()
 
 
@@ -207,10 +204,17 @@ class TaskViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
         if user.role in (User.Role.OWNER, User.Role.ADMIN):
             qs = Task.objects.all()
         elif user.role == User.Role.MANAGER:
-            qs = Task.objects.filter(department=user.department)
+            qs = Task.objects.filter(Q(assignees=user) | Q(created_by=user))
         else:
             qs = Task.objects.filter(department=user.department, assignees=user)
         qs = qs.select_related("department", "created_by").prefetch_related("assignees").distinct()
+        archived = self.request.query_params.get("archived", "").lower()
+        if self.action == "unarchive":
+            qs = qs.filter(is_archived=True)
+        elif archived in ("1", "true", "yes"):
+            qs = qs.filter(is_archived=True)
+        elif archived != "all":
+            qs = qs.filter(is_archived=False)
         if self.department_id():
             qs = qs.filter(department_id=self.department_id())
         if self.request.query_params.get("my_tasks", "").lower() in ("1", "true", "yes"):
@@ -224,7 +228,7 @@ class TaskViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
 
     def ensure_department_task_manager(self, department):
         user = self.request.user
-        can_manage = user.is_active and (user.role in (User.Role.OWNER, User.Role.ADMIN) or (user.role == User.Role.MANAGER and user.department_id == department.id))
+        can_manage = user.is_active and user.role in (User.Role.OWNER, User.Role.ADMIN, User.Role.MANAGER)
         if not can_manage:
             raise PermissionDenied(
                 "Only an Owner, Admin, or Manager can manage tasks."
@@ -237,7 +241,7 @@ class TaskViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
         task = serializer.instance
         target_department = serializer.validated_data.get("department", task.department)
         user = self.request.user
-        if not user.is_active or not (user.role in (User.Role.OWNER, User.Role.ADMIN) or user.department_id == target_department.id):
+        if not user.is_active or not (user.role in (User.Role.OWNER, User.Role.ADMIN, User.Role.MANAGER) or user.department_id == target_department.id):
             raise PermissionDenied("You are not a member of this department.")
 
         is_manager = user.role in (User.Role.OWNER, User.Role.ADMIN, User.Role.MANAGER)
@@ -264,6 +268,32 @@ class TaskViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
         self.ensure_task_manager(instance)
         instance.delete()
 
+    @action(detail=True, methods=["post"])
+    def archive(self, request, pk=None):
+        task = self.get_object()
+        self.ensure_task_manager(task)
+        if task.status != Task.Status.COMPLETED:
+            return Response(
+                {"detail": "Only completed tasks can be archived."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not task.is_archived:
+            task.is_archived = True
+            task.archived_at = timezone.now()
+            task.archived_by = request.user
+            task.save(update_fields=["is_archived", "archived_at", "archived_by", "updated_at"])
+        return Response(self.get_serializer(task).data)
+
+    @action(detail=True, methods=["post"])
+    def unarchive(self, request, pk=None):
+        task = self.get_object()
+        self.ensure_task_manager(task)
+        task.is_archived = False
+        task.archived_at = None
+        task.archived_by = None
+        task.save(update_fields=["is_archived", "archived_at", "archived_by", "updated_at"])
+        return Response(self.get_serializer(task).data)
+
 class EventViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
     queryset = Event.objects.none()
     serializer_class = EventSerializer
@@ -276,7 +306,7 @@ class EventViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
         if getattr(self, "swagger_fake_view", False):
             return self.queryset
         qs = Event.objects.select_related("department", "created_by").prefetch_related("attendees").distinct()
-        if self.request.user.role not in (User.Role.OWNER, User.Role.ADMIN):
+        if self.request.user.role not in (User.Role.OWNER, User.Role.ADMIN, User.Role.MANAGER):
             qs = qs.filter(department=self.request.user.department)
         return qs.filter(department_id=self.department_id()) if self.department_id() else qs
 
@@ -304,7 +334,7 @@ class AnalyticsView(APIView):
         department_id = request.query_params.get("department")
         if not department_id:
             return Response({"department": "This query parameter is required."}, status=status.HTTP_400_BAD_REQUEST)
-        if request.user.role not in (User.Role.OWNER, User.Role.ADMIN) and str(request.user.department_id) != department_id:
+        if request.user.role not in (User.Role.OWNER, User.Role.ADMIN, User.Role.MANAGER) and str(request.user.department_id) != department_id:
             return Response({"detail": "You are not a member of this department."}, status=status.HTTP_403_FORBIDDEN)
         tasks = Task.objects.filter(department_id=department_id)
         total = tasks.count()
@@ -335,15 +365,16 @@ class DashboardView(APIView):
     )
     def get(self, request):
         user = request.user
-        tasks = Task.objects.select_related("department", "created_by").prefetch_related("assignees")
+        tasks = Task.objects.filter(is_archived=False).select_related("department", "created_by").prefetch_related("assignees")
         events = Event.objects.select_related("department", "created_by").prefetch_related("attendees")
 
-        if user.role not in (User.Role.OWNER, User.Role.ADMIN):
+        if user.role == User.Role.MANAGER:
+            tasks = tasks.filter(Q(assignees=user) | Q(created_by=user))
+        elif user.role not in (User.Role.OWNER, User.Role.ADMIN):
             tasks = tasks.filter(department=user.department)
             events = events.filter(department=user.department)
-            if user.role == User.Role.MEMBER:
-                tasks = tasks.filter(assignees=user)
-                events = events.filter(attendees=user)
+            tasks = tasks.filter(assignees=user)
+            events = events.filter(attendees=user)
 
         tasks = tasks.distinct()
         events = events.distinct()
@@ -564,7 +595,7 @@ class ReportViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
         if getattr(self, "swagger_fake_view", False):
             return self.queryset
         qs = Report.objects.select_related("generated_by", "department").distinct()
-        if self.request.user.role not in (User.Role.OWNER, User.Role.ADMIN):
+        if self.request.user.role not in (User.Role.OWNER, User.Role.ADMIN, User.Role.MANAGER):
             qs = qs.filter(department=self.request.user.department)
         return qs.filter(department_id=self.department_id()) if self.department_id() else qs
 

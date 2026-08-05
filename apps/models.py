@@ -51,8 +51,10 @@ class Department(TimeStampedModel):
 
 class Task(TimeStampedModel):
     class Status(models.TextChoices):
+        BACKLOG = "backlog", "Backlog"
         NOT_STARTED = "not_started", "Not Started"
         IN_PROGRESS = "in_progress", "In Progress"
+        ON_HOLD = "on_hold", "On Hold"
         COMPLETED = "completed", "Completed"
 
     class Priority(models.TextChoices):
@@ -70,6 +72,15 @@ class Task(TimeStampedModel):
     created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name="created_tasks")
     due_date = models.DateField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
+    is_archived = models.BooleanField(default=False)
+    archived_at = models.DateTimeField(null=True, blank=True)
+    archived_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        related_name="archived_tasks",
+        null=True,
+        blank=True,
+    )
     progress = models.PositiveSmallIntegerField(default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
 
     class Meta:
@@ -175,4 +186,3 @@ class Report(TimeStampedModel):
 
     class Meta:
         ordering = ["-created_at"]
-
