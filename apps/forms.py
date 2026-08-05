@@ -78,16 +78,10 @@ class BulkMembershipAdminForm(forms.ModelForm):
 
     class Meta:
         model = Membership
-        fields = ("workspace", "department", "is_active")
+        fields = ("department", "is_active")
 
     def clean(self):
         cleaned_data = super().clean()
-        workspace = cleaned_data.get("workspace")
-        department = cleaned_data.get("department")
-
-        if workspace and department and department.workspace_id != workspace.id:
-            self.add_error("department", "Department must belong to the selected workspace.")
-
         selected_roles = {}
         for field_name, role in self.ROLE_FIELDS:
             for user in cleaned_data.get(field_name) or ():
@@ -95,7 +89,7 @@ class BulkMembershipAdminForm(forms.ModelForm):
                     self.add_error(
                         field_name,
                         f"{user} is already selected as {selected_roles[user.pk]}. "
-                        "A user can have only one role in a workspace.",
+                        "A user can have only one role in the organization.",
                     )
                 else:
                     selected_roles[user.pk] = Membership.Role(role).label
@@ -112,15 +106,12 @@ class BulkMembershipAdminForm(forms.ModelForm):
             for user in self.cleaned_data[field_name]
         ]
         first_user, first_role = selections[0]
-        workspace = self.cleaned_data["workspace"]
         existing_membership = Membership.objects.filter(
-            workspace=workspace,
             user=first_user,
         ).first()
         if existing_membership:
             self.instance = existing_membership
 
-        self.instance.workspace = workspace
         self.instance.department = self.cleaned_data.get("department")
         self.instance.is_active = self.cleaned_data["is_active"]
         self.instance.user = first_user
@@ -131,7 +122,6 @@ class BulkMembershipAdminForm(forms.ModelForm):
     def save_remaining_memberships(self):
         for user, role in self._remaining_memberships:
             Membership.objects.update_or_create(
-                workspace=self.instance.workspace,
                 user=user,
                 defaults={
                     "department": self.instance.department,

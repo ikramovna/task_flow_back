@@ -8,7 +8,7 @@ from django.conf import settings
 from django.contrib.auth.tokens import default_token_generator
 from django.http import FileResponse
 from django.db import transaction
-from django.db.models import Count, F, Q
+from django.db.models import Count, Q
 from django.db.models.functions import TruncMonth
 from django.utils import timezone
 from django.utils.encoding import force_bytes
@@ -23,10 +23,10 @@ from rest_framework.views import APIView
 from drf_spectacular.utils import extend_schema, inline_serializer
 
 from .filters import EventFilter, ProjectFilter, TaskFilter
-from .models import Conversation, ConversationParticipant, Department, Event, FAQ, Membership, Message, Project, Report, SupportTicket, Task, TimeEntry, User, UserPreference, Workspace
+from .models import Conversation, ConversationParticipant, Department, Event, FAQ, Membership, Message, Project, Report, SupportTicket, Task, TimeEntry, User, UserPreference
 from .pagination import StandardPagination
-from .permissions import IsWorkspaceMember
-from .serializers import AccountDeleteSerializer, ConversationSerializer, DepartmentSerializer, EventSerializer, FAQSerializer, MembershipSerializer, MessageSerializer, PasswordChangeSerializer, PasswordResetConfirmSerializer, PasswordResetRequestSerializer, ProfileSerializer, ProjectSerializer, ReportSerializer, SupportTicketSerializer, TaskSerializer, TimeEntrySerializer, TwoFactorSerializer, UserPreferenceSerializer, WorkspaceSerializer
+from .permissions import IsDepartmentMember
+from .serializers import AccountDeleteSerializer, ConversationSerializer, DepartmentSerializer, EventSerializer, FAQSerializer, MembershipSerializer, MessageSerializer, PasswordChangeSerializer, PasswordResetConfirmSerializer, PasswordResetRequestSerializer, ProfileSerializer, ProjectSerializer, ReportSerializer, SupportTicketSerializer, TaskSerializer, TimeEntrySerializer, TwoFactorSerializer, UserPreferenceSerializer
 
 
 class PasswordResetRequestView(generics.GenericAPIView):
@@ -82,33 +82,20 @@ class PasswordResetConfirmView(generics.GenericAPIView):
         return Response({"detail": "Password reset successfully."})
 
 
-class WorkspaceViewSet(viewsets.ModelViewSet):
-    queryset = Workspace.objects.none()
-    serializer_class = WorkspaceSerializer
-    permission_classes = (IsAuthenticated,)
-
-    def get_queryset(self):
-        if getattr(self, "swagger_fake_view", False):
-            return self.queryset
-        return Workspace.objects.filter(memberships__user=self.request.user, memberships__is_active=True).annotate(
-            member_count=Count("memberships", filter=Q(memberships__is_active=True), distinct=True),
-            department_count=Count("departments", filter=Q(departments__is_active=True), distinct=True),
-        ).distinct()
-
-
-class WorkspaceScopedMixin:
-    permission_classes = (IsAuthenticated, IsWorkspaceMember)
+class DepartmentScopedMixin:
+    permission_classes = (IsAuthenticated, IsDepartmentMember)
     pagination_class = StandardPagination
 
-    def workspace_id(self):
-        return self.request.query_params.get("workspace")
+    def department_id(self):
+        return self.request.query_params.get("department")
 
-    def ensure_member(self, workspace):
-        if not workspace.memberships.filter(user=self.request.user, is_active=True).exists():
-            raise serializers.ValidationError({"workspace": "You are not a member of this workspace."})
+    def ensure_member(self, department):
+        memberships = self.request.user.memberships.filter(is_active=True)
+        if not (memberships.filter(role__in=(Membership.Role.OWNER, Membership.Role.ADMIN)).exists() or memberships.filter(department=department).exists()):
+            raise serializers.ValidationError({"department": "You are not a member of this department."})
 
 
-class MembershipViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
+class MembershipViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
     queryset = Membership.objects.none()
     serializer_class = MembershipSerializer
     filter_backends = (DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter)
@@ -125,19 +112,18 @@ class MembershipViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return self.queryset
-        qs = Membership.objects.select_related("user", "workspace", "department").filter(workspace__memberships__user=self.request.user, workspace__memberships__is_active=True)
-        return qs.filter(workspace_id=self.workspace_id()) if self.workspace_id() else qs
+        qs = Membership.objects.select_related("user", "department")
+        if not self.request.user.is_superuser:
+            own = Membership.objects.filter(user=self.request.user, is_active=True).first()
+            qs = qs if own and own.role in self.manager_roles[:2] else qs.filter(department=own.department if own else None)
+        return qs.filter(department_id=self.department_id()) if self.department_id() else qs
 
     def perform_create(self, serializer):
-        workspace = serializer.validated_data["workspace"]
         department = serializer.validated_data["department"]
         can_add_member = Membership.objects.filter(
-            workspace=workspace,
-            department=department,
             user=self.request.user,
             is_active=True,
-            role__in=self.manager_roles,
-        ).exists()
+        ).filter(Q(role__in=self.manager_roles[:2]) | Q(role=Membership.Role.MANAGER, department=department)).exists()
         if not can_add_member:
             raise PermissionDenied(
                 "Only an Owner, Admin, or Manager of this department can add members."
@@ -147,38 +133,48 @@ class MembershipViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
     @action(detail=False, methods=["get"])
     def summary(self, request):
         qs = self.filter_queryset(self.get_queryset())
-        tasks = Task.objects.filter(project__workspace_id=self.workspace_id(), assignees__memberships__in=qs).distinct()
+        tasks = Task.objects.filter(assignees__memberships__in=qs).distinct()
         total = qs.count()
         completed = tasks.filter(status=Task.Status.COMPLETED).count()
         efficiency = round(completed * 100 / tasks.count()) if tasks.exists() else 0
         return Response({"total_members": total, "average_efficiency": efficiency, "active_tasks": tasks.exclude(status=Task.Status.COMPLETED).count()})
 
 
-class DepartmentViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
+class DepartmentViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
     queryset = Department.objects.none()
     serializer_class = DepartmentSerializer
     filter_backends = (DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter)
-    filterset_fields = ("workspace", "is_active")
+    filterset_fields = ("is_active",)
     search_fields = ("name", "code", "description")
     ordering_fields = ("name", "code", "created_at")
 
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return self.queryset
-        qs = Department.objects.filter(
-            workspace__memberships__user=self.request.user,
-            workspace__memberships__is_active=True,
-        ).select_related("workspace").annotate(
+        qs = Department.objects.annotate(
             member_count=Count("memberships", filter=Q(memberships__is_active=True))
-        ).distinct()
-        return qs.filter(workspace_id=self.workspace_id()) if self.workspace_id() else qs
+        ).order_by("name").distinct()
+        if self.request.user.is_superuser or self.request.user.memberships.filter(is_active=True, role__in=(Membership.Role.OWNER, Membership.Role.ADMIN)).exists():
+            return qs
+        return qs.filter(memberships__user=self.request.user, memberships__is_active=True)
 
     def perform_create(self, serializer):
-        self.ensure_member(serializer.validated_data["workspace"])
+        if not (self.request.user.is_superuser or self.request.user.memberships.filter(is_active=True, role__in=(Membership.Role.OWNER, Membership.Role.ADMIN)).exists()):
+            raise PermissionDenied("Only an Owner or Admin can create departments.")
         serializer.save()
 
+    def perform_update(self, serializer):
+        if not (self.request.user.is_superuser or self.request.user.memberships.filter(is_active=True, role__in=(Membership.Role.OWNER, Membership.Role.ADMIN)).exists()):
+            raise PermissionDenied("Only an Owner or Admin can update departments.")
+        serializer.save()
 
-class ProjectViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
+    def perform_destroy(self, instance):
+        if not (self.request.user.is_superuser or self.request.user.memberships.filter(is_active=True, role__in=(Membership.Role.OWNER, Membership.Role.ADMIN)).exists()):
+            raise PermissionDenied("Only an Owner or Admin can delete departments.")
+        instance.delete()
+
+
+class ProjectViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
     queryset = Project.objects.none()
     serializer_class = ProjectSerializer
     filter_backends = (DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter)
@@ -192,14 +188,11 @@ class ProjectViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
         Membership.Role.MANAGER,
     )
 
-    def ensure_project_manager(self, workspace, department):
+    def ensure_project_manager(self, department):
         allowed = Membership.objects.filter(
-            workspace=workspace,
-            department=department,
             user=self.request.user,
             is_active=True,
-            role__in=self.manager_roles,
-        ).exists()
+        ).filter(Q(role__in=self.manager_roles[:2]) | Q(role=Membership.Role.MANAGER, department=department)).exists()
         if not allowed:
             raise PermissionDenied(
                 "Only an Owner, Admin, or Manager of this department can manage projects."
@@ -208,28 +201,22 @@ class ProjectViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return self.queryset
-        qs = Project.objects.filter(
-            department__memberships__user=self.request.user,
-            department__memberships__workspace_id=F("workspace_id"),
-            department__memberships__is_active=True,
-        ).select_related("workspace", "department", "created_by").prefetch_related("members").annotate(task_count=Count("tasks", distinct=True), completed_task_count=Count("tasks", filter=Q(tasks__status=Task.Status.COMPLETED), distinct=True)).order_by("-created_at").distinct()
-        return qs.filter(workspace_id=self.workspace_id()) if self.workspace_id() else qs
+        qs = Project.objects.select_related("department", "created_by").prefetch_related("members").annotate(task_count=Count("tasks", distinct=True), completed_task_count=Count("tasks", filter=Q(tasks__status=Task.Status.COMPLETED), distinct=True)).order_by("-created_at").distinct()
+        if not self.request.user.memberships.filter(is_active=True, role__in=(Membership.Role.OWNER, Membership.Role.ADMIN)).exists():
+            qs = qs.filter(department__memberships__user=self.request.user, department__memberships__is_active=True)
+        return qs.filter(department_id=self.department_id()) if self.department_id() else qs
 
     def perform_create(self, serializer):
-        self.ensure_project_manager(
-            serializer.validated_data["workspace"],
-            serializer.validated_data["department"],
-        )
+        self.ensure_project_manager(serializer.validated_data["department"])
         serializer.save(created_by=self.request.user)
 
     def perform_update(self, serializer):
-        workspace = serializer.validated_data.get("workspace", serializer.instance.workspace)
         department = serializer.validated_data.get("department", serializer.instance.department)
-        self.ensure_project_manager(workspace, department)
+        self.ensure_project_manager(department)
         serializer.save()
 
     def perform_destroy(self, instance):
-        self.ensure_project_manager(instance.workspace, instance.department)
+        self.ensure_project_manager(instance.department)
         instance.delete()
 
     @action(detail=False, methods=["get"])
@@ -238,7 +225,7 @@ class ProjectViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
         return Response({"active_projects": qs.exclude(status=Project.Status.ARCHIVED).count(), "in_progress": qs.filter(status=Project.Status.IN_PROGRESS).count(), "completed": qs.filter(status=Project.Status.COMPLETED).count(), "at_risk": qs.filter(status=Project.Status.AT_RISK).count()})
 
 
-class TaskViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
+class TaskViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
     queryset = Task.objects.none()
     serializer_class = TaskSerializer
     filter_backends = (DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter)
@@ -264,52 +251,46 @@ class TaskViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
         member_department_ids = memberships.filter(
             role=Membership.Role.MEMBER,
         ).values("department_id")
-        qs = Task.objects.filter(
-            Q(project__department_id__in=manager_department_ids)
-            | Q(
-                project__department_id__in=member_department_ids,
-                assignees=self.request.user,
+        if memberships.filter(role__in=(Membership.Role.OWNER, Membership.Role.ADMIN)).exists():
+            qs = Task.objects.all()
+        else:
+            qs = Task.objects.filter(
+                Q(project__department_id__in=manager_department_ids)
+                | Q(project__department_id__in=member_department_ids, assignees=self.request.user)
             )
-        ).select_related("project", "project__department", "created_by").prefetch_related("assignees").distinct()
-        if self.workspace_id():
-            qs = qs.filter(project__workspace_id=self.workspace_id())
+        qs = qs.select_related("project", "project__department", "created_by").prefetch_related("assignees").distinct()
+        if self.department_id():
+            qs = qs.filter(project__department_id=self.department_id())
         if self.request.query_params.get("my_tasks", "").lower() in ("1", "true", "yes"):
             qs = qs.filter(assignees=self.request.user)
         return qs
 
     def perform_create(self, serializer):
         project = serializer.validated_data["project"]
-        self.ensure_workspace_task_manager(project.workspace, project.department)
+        self.ensure_department_task_manager(project.department)
         serializer.save(created_by=self.request.user)
 
-    def ensure_workspace_task_manager(self, workspace, department):
-        can_manage = workspace.memberships.filter(
+    def ensure_department_task_manager(self, department):
+        can_manage = Membership.objects.filter(
             user=self.request.user,
-            department=department,
             is_active=True,
-            role__in=(
-                Membership.Role.OWNER,
-                Membership.Role.ADMIN,
-                Membership.Role.MANAGER,
-            ),
-        ).exists()
+        ).filter(Q(role__in=(Membership.Role.OWNER, Membership.Role.ADMIN)) | Q(role=Membership.Role.MANAGER, department=department)).exists()
         if not can_manage:
             raise PermissionDenied(
                 "Only an Owner, Admin, or Manager can manage tasks."
             )
 
     def ensure_task_manager(self, task):
-        self.ensure_workspace_task_manager(task.project.workspace, task.project.department)
+        self.ensure_department_task_manager(task.project.department)
 
     def perform_update(self, serializer):
         task = serializer.instance
-        membership = task.project.workspace.memberships.filter(
+        membership = Membership.objects.filter(
             user=self.request.user,
-            department=task.project.department,
             is_active=True,
-        ).first()
+        ).filter(Q(role__in=(Membership.Role.OWNER, Membership.Role.ADMIN)) | Q(department=task.project.department)).first()
         if not membership:
-            raise PermissionDenied("You are not a member of this workspace.")
+            raise PermissionDenied("You are not a member of this department.")
 
         is_manager = membership.role in (
             Membership.Role.OWNER,
@@ -340,13 +321,12 @@ class TaskViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
         instance.delete()
 
     def ensure_timer_access(self, task):
-        membership = task.project.workspace.memberships.filter(
+        membership = Membership.objects.filter(
             user=self.request.user,
-            department=task.project.department,
             is_active=True,
-        ).first()
+        ).filter(Q(role__in=(Membership.Role.OWNER, Membership.Role.ADMIN)) | Q(department=task.project.department)).first()
         if not membership:
-            raise PermissionDenied("You are not a member of this workspace.")
+            raise PermissionDenied("You are not a member of this department.")
         is_manager = membership.role in (
             Membership.Role.OWNER,
             Membership.Role.ADMIN,
@@ -401,7 +381,7 @@ class TaskViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
         return Response(TimeEntrySerializer(entry).data)
 
 
-class EventViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
+class EventViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
     queryset = Event.objects.none()
     serializer_class = EventSerializer
     filter_backends = (DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter)
@@ -412,16 +392,18 @@ class EventViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return self.queryset
-        qs = Event.objects.filter(workspace__memberships__user=self.request.user, workspace__memberships__is_active=True).select_related("workspace", "created_by").prefetch_related("attendees").distinct()
-        return qs.filter(workspace_id=self.workspace_id()) if self.workspace_id() else qs
+        qs = Event.objects.select_related("department", "created_by").prefetch_related("attendees").distinct()
+        if not self.request.user.memberships.filter(is_active=True, role__in=(Membership.Role.OWNER, Membership.Role.ADMIN)).exists():
+            qs = qs.filter(department__memberships__user=self.request.user, department__memberships__is_active=True)
+        return qs.filter(department_id=self.department_id()) if self.department_id() else qs
 
     def perform_create(self, serializer):
-        self.ensure_member(serializer.validated_data["workspace"])
+        self.ensure_member(serializer.validated_data["department"])
         serializer.save(created_by=self.request.user)
 
 
 class AnalyticsView(APIView):
-    permission_classes = (IsAuthenticated, IsWorkspaceMember)
+    permission_classes = (IsAuthenticated, IsDepartmentMember)
 
     @extend_schema(
         responses=inline_serializer(
@@ -436,12 +418,13 @@ class AnalyticsView(APIView):
         )
     )
     def get(self, request):
-        workspace_id = request.query_params.get("workspace")
-        if not workspace_id:
-            return Response({"workspace": "This query parameter is required."}, status=status.HTTP_400_BAD_REQUEST)
-        if not request.user.memberships.filter(workspace_id=workspace_id, is_active=True).exists():
-            return Response({"detail": "You are not a member of this workspace."}, status=status.HTTP_403_FORBIDDEN)
-        tasks = Task.objects.filter(project__workspace_id=workspace_id)
+        department_id = request.query_params.get("department")
+        if not department_id:
+            return Response({"department": "This query parameter is required."}, status=status.HTTP_400_BAD_REQUEST)
+        memberships = request.user.memberships.filter(is_active=True)
+        if not (memberships.filter(role__in=(Membership.Role.OWNER, Membership.Role.ADMIN)).exists() or memberships.filter(department_id=department_id).exists()):
+            return Response({"detail": "You are not a member of this department."}, status=status.HTTP_403_FORBIDDEN)
+        tasks = Task.objects.filter(project__department_id=department_id)
         total = tasks.count()
         completed = tasks.filter(status=Task.Status.COMPLETED)
         completion_rate = round(completed.count() * 100 / total, 1) if total else 0
@@ -509,7 +492,7 @@ class AccountDeleteView(generics.GenericAPIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-class ConversationViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
+class ConversationViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
     queryset = Conversation.objects.none()
     serializer_class = ConversationSerializer
     filter_backends = (filters.SearchFilter, filters.OrderingFilter)
@@ -519,13 +502,13 @@ class ConversationViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return self.queryset
-        qs = Conversation.objects.filter(participants=self.request.user).select_related("workspace").prefetch_related("participants", "messages__sender", "participant_links").distinct()
-        return qs.filter(workspace_id=self.workspace_id()) if self.workspace_id() else qs
+        qs = Conversation.objects.filter(participants=self.request.user).select_related("department").prefetch_related("participants", "messages__sender", "participant_links").distinct()
+        return qs.filter(department_id=self.department_id()) if self.department_id() else qs
 
     @transaction.atomic
     def perform_create(self, serializer):
-        workspace = serializer.validated_data["workspace"]
-        self.ensure_member(workspace)
+        department = serializer.validated_data["department"]
+        self.ensure_member(department)
         conversation = serializer.save()
         participants = set(serializer.validated_data.get("participants", [])) | {self.request.user}
         for user in participants:
@@ -569,7 +552,7 @@ class MessageViewSet(viewsets.ModelViewSet):
         instance.save(update_fields=["is_deleted", "body", "attachment", "updated_at"])
 
 
-class ReportViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
+class ReportViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
     queryset = Report.objects.none()
     serializer_class = ReportSerializer
     filter_backends = (DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter)
@@ -580,15 +563,17 @@ class ReportViewSet(WorkspaceScopedMixin, viewsets.ModelViewSet):
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return self.queryset
-        qs = Report.objects.filter(workspace__memberships__user=self.request.user, workspace__memberships__is_active=True).select_related("generated_by", "workspace").distinct()
-        return qs.filter(workspace_id=self.workspace_id()) if self.workspace_id() else qs
+        qs = Report.objects.select_related("generated_by", "department").distinct()
+        if not self.request.user.memberships.filter(is_active=True, role__in=(Membership.Role.OWNER, Membership.Role.ADMIN)).exists():
+            qs = qs.filter(department__memberships__user=self.request.user, department__memberships__is_active=True)
+        return qs.filter(department_id=self.department_id()) if self.department_id() else qs
 
     def perform_create(self, serializer):
-        workspace = serializer.validated_data["workspace"]
-        self.ensure_member(workspace)
+        department = serializer.validated_data["department"]
+        self.ensure_member(department)
         report = serializer.save(generated_by=self.request.user)
-        tasks = Task.objects.filter(project__workspace=workspace)
-        result = {"projects": workspace.projects.count(), "tasks": tasks.count(), "completed": tasks.filter(status=Task.Status.COMPLETED).count(), "in_progress": tasks.filter(status=Task.Status.IN_PROGRESS).count(), "members": workspace.memberships.filter(is_active=True).count(), "logged_minutes": sum(entry.minutes for entry in TimeEntry.objects.filter(task__project__workspace=workspace))}
+        tasks = Task.objects.filter(project__department=department)
+        result = {"projects": department.projects.count(), "tasks": tasks.count(), "completed": tasks.filter(status=Task.Status.COMPLETED).count(), "in_progress": tasks.filter(status=Task.Status.IN_PROGRESS).count(), "members": department.memberships.filter(is_active=True).count(), "logged_minutes": sum(entry.minutes for entry in TimeEntry.objects.filter(task__project__department=department))}
         buffer = io.StringIO()
         writer = csv.writer(buffer)
         writer.writerow(["metric", "value"])
@@ -627,18 +612,22 @@ class TimeEntryViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return self.queryset
-        return TimeEntry.objects.filter(task__project__workspace__memberships__user=self.request.user, task__project__workspace__memberships__is_active=True).select_related("task", "user").distinct()
+        qs = TimeEntry.objects.select_related("task", "user")
+        if self.request.user.memberships.filter(is_active=True, role__in=(Membership.Role.OWNER, Membership.Role.ADMIN)).exists():
+            return qs
+        return qs.filter(task__project__department__memberships__user=self.request.user, task__project__department__memberships__is_active=True).distinct()
 
     def perform_create(self, serializer):
         task = serializer.validated_data["task"]
-        if not task.project.workspace.memberships.filter(user=self.request.user, is_active=True).exists():
-            raise serializers.ValidationError({"task": "You are not a member of this workspace."})
+        memberships = self.request.user.memberships.filter(is_active=True)
+        if not (memberships.filter(role__in=(Membership.Role.OWNER, Membership.Role.ADMIN)).exists() or memberships.filter(department=task.project.department).exists()):
+            raise serializers.ValidationError({"task": "You are not a member of this department."})
         serializer.save(user=self.request.user)
 
     def _ensure_owner_or_manager(self, instance):
-        allowed = instance.task.project.workspace.memberships.filter(user=self.request.user, is_active=True, role__in=[Membership.Role.OWNER, Membership.Role.ADMIN, Membership.Role.MANAGER]).exists()
+        allowed = instance.task.project.department.memberships.filter(user=self.request.user, is_active=True, role__in=[Membership.Role.OWNER, Membership.Role.ADMIN, Membership.Role.MANAGER]).exists()
         if instance.user != self.request.user and not allowed:
-            raise PermissionDenied("Only the owner or a workspace manager can change this entry.")
+            raise PermissionDenied("Only the owner or a department manager can change this entry.")
 
     def perform_update(self, serializer):
         self._ensure_owner_or_manager(serializer.instance)

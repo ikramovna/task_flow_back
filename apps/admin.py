@@ -3,7 +3,7 @@ from django.contrib.auth.admin import UserAdmin
 from import_export.admin import ImportExportMixin, ImportExportModelAdmin
 
 from .forms import BulkMembershipAdminForm, EventAdminForm
-from .models import Conversation, ConversationParticipant, Department, Event, FAQ, Membership, Message, Project, Report, SupportTicket, Task, TimeEntry, User, UserPreference, Workspace
+from .models import Conversation, ConversationParticipant, Department, Event, FAQ, Membership, Message, Project, Report, SupportTicket, Task, TimeEntry, User, UserPreference
 from .resources import (
     ConversationParticipantResource,
     ConversationResource,
@@ -19,7 +19,6 @@ from .resources import (
     TimeEntryResource,
     UserPreferenceResource,
     UserResource,
-    WorkspaceResource,
 )
 
 
@@ -44,28 +43,12 @@ class TaskFlowUserAdmin(ImportExportMixin, UserAdmin):
         return obj.get_full_name() or "—"
 
 
-@admin.register(Workspace)
-class WorkspaceAdmin(ImportExportModelAdmin):
-    resource_classes = (WorkspaceResource,)
-    list_display = ("name", "slug", "owner", "member_count", "created_at")
-    search_fields = ("name", "slug", "owner__email", "owner__first_name", "owner__last_name")
-    autocomplete_fields = ("owner",)
-    prepopulated_fields = {"slug": ("name",)}
-    readonly_fields = ("created_at", "updated_at")
-    inlines = (MembershipInline,)
-
-    @admin.display(description="Members")
-    def member_count(self, obj):
-        return obj.memberships.count()
-
-
 @admin.register(Department)
 class DepartmentAdmin(ImportExportModelAdmin):
     resource_classes = (DepartmentResource,)
-    list_display = ("name", "code", "workspace", "is_active", "member_count", "created_at")
-    list_filter = ("is_active", "workspace")
-    search_fields = ("name", "code", "description", "workspace__name")
-    autocomplete_fields = ("workspace",)
+    list_display = ("name", "code", "is_active", "member_count", "created_at")
+    list_filter = ("is_active",)
+    search_fields = ("name", "code", "description")
     readonly_fields = ("created_at", "updated_at")
 
     @admin.display(description="Members")
@@ -76,10 +59,10 @@ class DepartmentAdmin(ImportExportModelAdmin):
 @admin.register(Membership)
 class MembershipAdmin(ImportExportModelAdmin):
     resource_classes = (MembershipResource,)
-    list_display = ("user", "workspace", "department", "role", "is_active", "joined_at")
-    list_filter = ("role", "is_active", "workspace", "department")
-    search_fields = ("user__email", "user__first_name", "user__last_name", "workspace__name", "department__name")
-    autocomplete_fields = ("workspace", "department", "user")
+    list_display = ("user", "department", "role", "is_active", "joined_at")
+    list_filter = ("role", "is_active", "department")
+    search_fields = ("user__email", "user__first_name", "user__last_name", "department__name")
+    autocomplete_fields = ("department", "user")
     readonly_fields = ("joined_at", "created_at", "updated_at")
 
     def get_form(self, request, obj=None, **kwargs):
@@ -94,7 +77,6 @@ class MembershipAdmin(ImportExportModelAdmin):
                     None,
                     {
                         "fields": (
-                            "workspace",
                             "department",
                             "owners",
                             "admins",
@@ -116,10 +98,10 @@ class MembershipAdmin(ImportExportModelAdmin):
 @admin.register(Project)
 class ProjectAdmin(ImportExportModelAdmin):
     resource_classes = (ProjectResource,)
-    list_display = ("name", "workspace", "department", "status", "priority", "progress", "due_date", "created_by")
-    list_filter = ("status", "priority", "workspace", "department", "due_date")
-    search_fields = ("name", "description", "workspace__name", "created_by__email")
-    autocomplete_fields = ("workspace", "department", "members", "created_by")
+    list_display = ("name", "department", "status", "priority", "progress", "due_date", "created_by")
+    list_filter = ("status", "priority", "department", "due_date")
+    search_fields = ("name", "description", "department__name", "created_by__email")
+    autocomplete_fields = ("department", "members", "created_by")
     readonly_fields = ("created_at", "updated_at", "progress")
     date_hierarchy = "created_at"
 
@@ -128,7 +110,7 @@ class ProjectAdmin(ImportExportModelAdmin):
 class TaskAdmin(ImportExportModelAdmin):
     resource_classes = (TaskResource,)
     list_display = ("title", "project", "status", "priority", "progress", "due_date", "created_by")
-    list_filter = ("status", "priority", "project__workspace", "project", "due_date")
+    list_filter = ("status", "priority", "project__department", "project", "due_date")
     search_fields = ("title", "description", "category", "project__name", "assignees__email")
     autocomplete_fields = ("project", "assignees", "created_by")
     readonly_fields = ("created_at", "updated_at", "completed_at")
@@ -139,10 +121,10 @@ class TaskAdmin(ImportExportModelAdmin):
 class EventAdmin(ImportExportModelAdmin):
     form = EventAdminForm
     resource_classes = (EventResource,)
-    list_display = ("title", "workspace", "event_type", "starts_at", "ends_at", "location")
-    list_filter = ("event_type", "workspace", "starts_at")
-    search_fields = ("title", "description", "location", "workspace__name")
-    autocomplete_fields = ("workspace", "attendees", "created_by")
+    list_display = ("title", "department", "event_type", "starts_at", "ends_at", "location")
+    list_filter = ("event_type", "department", "starts_at")
+    search_fields = ("title", "description", "location", "department__name")
+    autocomplete_fields = ("department", "attendees", "created_by")
     readonly_fields = ("created_at", "updated_at")
     date_hierarchy = "starts_at"
 
@@ -160,10 +142,10 @@ class UserPreferenceAdmin(ImportExportModelAdmin):
 @admin.register(Conversation)
 class ConversationAdmin(ImportExportModelAdmin):
     resource_classes = (ConversationResource,)
-    list_display = ("display_title", "workspace", "is_group", "participant_count", "updated_at")
-    list_filter = ("is_group", "workspace")
-    search_fields = ("title", "workspace__name", "participants__email")
-    autocomplete_fields = ("workspace",)
+    list_display = ("display_title", "department", "is_group", "participant_count", "updated_at")
+    list_filter = ("is_group", "department")
+    search_fields = ("title", "department__name", "participants__email")
+    autocomplete_fields = ("department",)
     readonly_fields = ("created_at", "updated_at")
 
     @admin.display(description="Conversation")
@@ -203,10 +185,10 @@ class MessageAdmin(ImportExportModelAdmin):
 @admin.register(Report)
 class ReportAdmin(ImportExportModelAdmin):
     resource_classes = (ReportResource,)
-    list_display = ("name", "workspace", "report_type", "status", "generated_by", "created_at")
-    list_filter = ("report_type", "status", "workspace", "created_at")
-    search_fields = ("name", "workspace__name", "generated_by__email")
-    autocomplete_fields = ("workspace", "generated_by")
+    list_display = ("name", "department", "report_type", "status", "generated_by", "created_at")
+    list_filter = ("report_type", "status", "department", "created_at")
+    search_fields = ("name", "department__name", "generated_by__email")
+    autocomplete_fields = ("department", "generated_by")
     readonly_fields = ("created_at", "updated_at")
     date_hierarchy = "created_at"
 

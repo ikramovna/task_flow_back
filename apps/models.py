@@ -1,7 +1,6 @@
 import uuid
 
 from django.contrib.auth.models import AbstractUser
-from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
@@ -26,32 +25,18 @@ class User(AbstractUser):
     REQUIRED_FIELDS = ["username"]
 
 
-class Workspace(TimeStampedModel):
-    name = models.CharField(max_length=150)
-    slug = models.SlugField(unique=True)
-    owner = models.ForeignKey(User, on_delete=models.PROTECT, related_name="owned_workspaces")
-    members = models.ManyToManyField(User, through="Membership", related_name="workspaces")
-
-    def __str__(self):
-        return self.name
-
-
 class Department(TimeStampedModel):
-    workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name="departments")
     name = models.CharField(max_length=150)
-    code = models.SlugField(max_length=32)
+    code = models.SlugField(max_length=32, unique=True)
     description = models.TextField(blank=True)
     is_active = models.BooleanField(default=True)
 
     class Meta:
         ordering = ("name",)
-        constraints = [
-            models.UniqueConstraint(fields=("workspace", "name"), name="unique_department_name_per_workspace"),
-            models.UniqueConstraint(fields=("workspace", "code"), name="unique_department_code_per_workspace"),
-        ]
+        constraints = [models.UniqueConstraint(fields=("name",), name="unique_department_name")]
 
     def __str__(self):
-        return f"{self.workspace} — {self.name}"
+        return self.name
 
 
 class Membership(TimeStampedModel):
@@ -61,7 +46,6 @@ class Membership(TimeStampedModel):
         MANAGER = "manager", "Manager"
         MEMBER = "member", "Member"
 
-    workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name="memberships")
     department = models.ForeignKey(
         Department,
         on_delete=models.SET_NULL,
@@ -75,12 +59,7 @@ class Membership(TimeStampedModel):
     joined_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        constraints = [models.UniqueConstraint(fields=["workspace", "user"], name="unique_workspace_member")]
-
-    def clean(self):
-        super().clean()
-        if self.department_id and self.department.workspace_id != self.workspace_id:
-            raise ValidationError({"department": "Department must belong to the selected workspace."})
+        constraints = [models.UniqueConstraint(fields=["user"], name="unique_organization_member")]
 
 
 class Project(TimeStampedModel):
@@ -96,7 +75,6 @@ class Project(TimeStampedModel):
         MEDIUM = "medium", "Medium"
         HIGH = "high", "High"
 
-    workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name="projects")
     department = models.ForeignKey(
         Department,
         on_delete=models.PROTECT,
@@ -156,7 +134,7 @@ class Event(TimeStampedModel):
         DEMO = "demo", "Demo"
         DEADLINE = "deadline", "Deadline"
 
-    workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name="events")
+    department = models.ForeignKey(Department, on_delete=models.CASCADE, related_name="events", null=True, blank=True)
     title = models.CharField(max_length=180)
     event_type = models.CharField(max_length=80, default=Type.MEETING)
     description = models.TextField(blank=True)
@@ -193,7 +171,7 @@ class UserPreference(TimeStampedModel):
 
 
 class Conversation(TimeStampedModel):
-    workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name="conversations")
+    department = models.ForeignKey(Department, on_delete=models.CASCADE, related_name="conversations", null=True, blank=True)
     title = models.CharField(max_length=180, blank=True)
     is_group = models.BooleanField(default=False)
     participants = models.ManyToManyField(User, through="ConversationParticipant", related_name="conversations")
@@ -237,7 +215,7 @@ class Report(TimeStampedModel):
         READY = "ready", "Ready"
         FAILED = "failed", "Failed"
 
-    workspace = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name="reports")
+    department = models.ForeignKey(Department, on_delete=models.CASCADE, related_name="reports", null=True, blank=True)
     name = models.CharField(max_length=180)
     report_type = models.CharField(max_length=24, choices=Type.choices)
     status = models.CharField(max_length=12, choices=Status.choices, default=Status.PROCESSING)

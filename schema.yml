@@ -8,7 +8,7 @@ paths:
     get:
       operationId: api_v1_analytics_retrieve
       tags:
-      - api
+      - Analytics
       security:
       - jwtAuth: []
       responses:
@@ -18,33 +18,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/AnalyticsResponse'
           description: ''
-  /api/v1/auth/register/:
-    post:
-      operationId: api_v1_auth_register_create
-      tags:
-      - api
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/Register'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/Register'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/Register'
-        required: true
-      security:
-      - jwtAuth: []
-      - {}
-      responses:
-        '201':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Register'
-          description: ''
   /api/v1/auth/token/:
     post:
       operationId: api_v1_auth_token_create
@@ -52,7 +25,7 @@ paths:
         Takes a set of user credentials and returns an access and refresh JSON web
         token pair to prove the authentication of those credentials.
       tags:
-      - api
+      - Auth
       requestBody:
         content:
           application/json:
@@ -79,7 +52,7 @@ paths:
         Takes a refresh type JSON web token and returns an access type JSON web
         token if the refresh token is valid.
       tags:
-      - api
+      - Auth
       requestBody:
         content:
           application/json:
@@ -128,7 +101,7 @@ paths:
         schema:
           type: string
       tags:
-      - api
+      - Conversations
       security:
       - jwtAuth: []
       responses:
@@ -141,7 +114,7 @@ paths:
     post:
       operationId: api_v1_conversations_create
       tags:
-      - api
+      - Conversations
       requestBody:
         content:
           application/json:
@@ -153,7 +126,6 @@ paths:
           multipart/form-data:
             schema:
               $ref: '#/components/schemas/Conversation'
-        required: true
       security:
       - jwtAuth: []
       responses:
@@ -175,7 +147,7 @@ paths:
         description: A UUID string identifying this conversation.
         required: true
       tags:
-      - api
+      - Conversations
       security:
       - jwtAuth: []
       responses:
@@ -196,7 +168,7 @@ paths:
         description: A UUID string identifying this conversation.
         required: true
       tags:
-      - api
+      - Conversations
       requestBody:
         content:
           application/json:
@@ -208,7 +180,6 @@ paths:
           multipart/form-data:
             schema:
               $ref: '#/components/schemas/Conversation'
-        required: true
       security:
       - jwtAuth: []
       responses:
@@ -229,7 +200,7 @@ paths:
         description: A UUID string identifying this conversation.
         required: true
       tags:
-      - api
+      - Conversations
       requestBody:
         content:
           application/json:
@@ -261,7 +232,7 @@ paths:
         description: A UUID string identifying this conversation.
         required: true
       tags:
-      - api
+      - Conversations
       security:
       - jwtAuth: []
       responses:
@@ -279,7 +250,7 @@ paths:
         description: A UUID string identifying this conversation.
         required: true
       tags:
-      - api
+      - Conversations
       requestBody:
         content:
           application/json:
@@ -291,7 +262,6 @@ paths:
           multipart/form-data:
             schema:
               $ref: '#/components/schemas/Conversation'
-        required: true
       security:
       - jwtAuth: []
       responses:
@@ -301,6 +271,178 @@ paths:
               schema:
                 $ref: '#/components/schemas/Conversation'
           description: ''
+  /api/v1/departments/:
+    get:
+      operationId: api_v1_departments_list
+      parameters:
+      - in: query
+        name: is_active
+        schema:
+          type: boolean
+      - name: ordering
+        required: false
+        in: query
+        description: Which field to use when ordering the results.
+        schema:
+          type: string
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: page_size
+        required: false
+        in: query
+        description: Number of results to return per page.
+        schema:
+          type: integer
+      - name: search
+        required: false
+        in: query
+        description: A search term.
+        schema:
+          type: string
+      tags:
+      - Departments
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedDepartmentList'
+          description: ''
+    post:
+      operationId: api_v1_departments_create
+      tags:
+      - Departments
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Department'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Department'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Department'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Department'
+          description: ''
+  /api/v1/departments/{id}/:
+    get:
+      operationId: api_v1_departments_retrieve
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this department.
+        required: true
+      tags:
+      - Departments
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Department'
+          description: ''
+    put:
+      operationId: api_v1_departments_update
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this department.
+        required: true
+      tags:
+      - Departments
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Department'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Department'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Department'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Department'
+          description: ''
+    patch:
+      operationId: api_v1_departments_partial_update
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this department.
+        required: true
+      tags:
+      - Departments
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedDepartment'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedDepartment'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedDepartment'
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Department'
+          description: ''
+    delete:
+      operationId: api_v1_departments_destroy
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this department.
+        required: true
+      tags:
+      - Departments
+      security:
+      - jwtAuth: []
+      responses:
+        '204':
+          description: No response body
   /api/v1/events/:
     get:
       operationId: api_v1_events_list
@@ -317,16 +459,6 @@ paths:
         name: event_type
         schema:
           type: string
-          enum:
-          - deadline
-          - demo
-          - meeting
-          - review
-        description: |-
-          * `meeting` - Meeting
-          * `review` - Review
-          * `demo` - Demo
-          * `deadline` - Deadline
       - name: ordering
         required: false
         in: query
@@ -362,7 +494,7 @@ paths:
           type: string
           format: date-time
       tags:
-      - api
+      - Events
       security:
       - jwtAuth: []
       responses:
@@ -375,7 +507,7 @@ paths:
     post:
       operationId: api_v1_events_create
       tags:
-      - api
+      - Events
       requestBody:
         content:
           application/json:
@@ -409,7 +541,7 @@ paths:
         description: A UUID string identifying this event.
         required: true
       tags:
-      - api
+      - Events
       security:
       - jwtAuth: []
       responses:
@@ -430,7 +562,7 @@ paths:
         description: A UUID string identifying this event.
         required: true
       tags:
-      - api
+      - Events
       requestBody:
         content:
           application/json:
@@ -463,7 +595,7 @@ paths:
         description: A UUID string identifying this event.
         required: true
       tags:
-      - api
+      - Events
       requestBody:
         content:
           application/json:
@@ -495,7 +627,7 @@ paths:
         description: A UUID string identifying this event.
         required: true
       tags:
-      - api
+      - Events
       security:
       - jwtAuth: []
       responses:
@@ -512,7 +644,7 @@ paths:
         schema:
           type: string
       tags:
-      - api
+      - FAQs
       security:
       - jwtAuth: []
       - {}
@@ -537,7 +669,7 @@ paths:
         description: A UUID string identifying this faq.
         required: true
       tags:
-      - api
+      - FAQs
       security:
       - jwtAuth: []
       - {}
@@ -552,7 +684,7 @@ paths:
     get:
       operationId: api_v1_me_retrieve
       tags:
-      - api
+      - Auth
       security:
       - jwtAuth: []
       responses:
@@ -565,7 +697,7 @@ paths:
     put:
       operationId: api_v1_me_update
       tags:
-      - api
+      - Auth
       requestBody:
         content:
           application/json:
@@ -589,7 +721,7 @@ paths:
     patch:
       operationId: api_v1_me_partial_update
       tags:
-      - api
+      - Auth
       requestBody:
         content:
           application/json:
@@ -614,7 +746,7 @@ paths:
     post:
       operationId: api_v1_me_change_password_create
       tags:
-      - api
+      - Auth
       requestBody:
         content:
           application/json:
@@ -640,7 +772,7 @@ paths:
     post:
       operationId: api_v1_me_delete_account_create
       tags:
-      - api
+      - Auth
       requestBody:
         content:
           application/json:
@@ -666,7 +798,7 @@ paths:
     get:
       operationId: api_v1_me_preferences_retrieve
       tags:
-      - api
+      - Auth
       security:
       - jwtAuth: []
       responses:
@@ -679,7 +811,7 @@ paths:
     put:
       operationId: api_v1_me_preferences_update
       tags:
-      - api
+      - Auth
       requestBody:
         content:
           application/json:
@@ -703,7 +835,7 @@ paths:
     patch:
       operationId: api_v1_me_preferences_partial_update
       tags:
-      - api
+      - Auth
       requestBody:
         content:
           application/json:
@@ -728,7 +860,7 @@ paths:
     patch:
       operationId: api_v1_me_two_factor_partial_update
       tags:
-      - api
+      - Auth
       requestBody:
         content:
           application/json:
@@ -753,6 +885,11 @@ paths:
     get:
       operationId: api_v1_members_list
       parameters:
+      - in: query
+        name: department
+        schema:
+          type: string
+          format: uuid
       - in: query
         name: is_active
         schema:
@@ -796,7 +933,7 @@ paths:
         schema:
           type: string
       tags:
-      - api
+      - Members
       security:
       - jwtAuth: []
       responses:
@@ -809,7 +946,7 @@ paths:
     post:
       operationId: api_v1_members_create
       tags:
-      - api
+      - Members
       requestBody:
         content:
           application/json:
@@ -843,7 +980,7 @@ paths:
         description: A UUID string identifying this membership.
         required: true
       tags:
-      - api
+      - Members
       security:
       - jwtAuth: []
       responses:
@@ -864,7 +1001,7 @@ paths:
         description: A UUID string identifying this membership.
         required: true
       tags:
-      - api
+      - Members
       requestBody:
         content:
           application/json:
@@ -897,7 +1034,7 @@ paths:
         description: A UUID string identifying this membership.
         required: true
       tags:
-      - api
+      - Members
       requestBody:
         content:
           application/json:
@@ -929,7 +1066,7 @@ paths:
         description: A UUID string identifying this membership.
         required: true
       tags:
-      - api
+      - Members
       security:
       - jwtAuth: []
       responses:
@@ -939,7 +1076,7 @@ paths:
     get:
       operationId: api_v1_members_summary_retrieve
       tags:
-      - api
+      - Members
       security:
       - jwtAuth: []
       responses:
@@ -977,7 +1114,7 @@ paths:
         schema:
           type: integer
       tags:
-      - api
+      - Messages
       security:
       - jwtAuth: []
       responses:
@@ -990,7 +1127,7 @@ paths:
     post:
       operationId: api_v1_messages_create
       tags:
-      - api
+      - Messages
       requestBody:
         content:
           application/json:
@@ -1024,7 +1161,7 @@ paths:
         description: A UUID string identifying this message.
         required: true
       tags:
-      - api
+      - Messages
       security:
       - jwtAuth: []
       responses:
@@ -1045,7 +1182,7 @@ paths:
         description: A UUID string identifying this message.
         required: true
       tags:
-      - api
+      - Messages
       requestBody:
         content:
           application/json:
@@ -1078,7 +1215,7 @@ paths:
         description: A UUID string identifying this message.
         required: true
       tags:
-      - api
+      - Messages
       requestBody:
         content:
           application/json:
@@ -1110,7 +1247,7 @@ paths:
         description: A UUID string identifying this message.
         required: true
       tags:
-      - api
+      - Messages
       security:
       - jwtAuth: []
       responses:
@@ -1120,6 +1257,11 @@ paths:
     get:
       operationId: api_v1_projects_list
       parameters:
+      - in: query
+        name: department
+        schema:
+          type: string
+          format: uuid
       - in: query
         name: members
         schema:
@@ -1181,7 +1323,7 @@ paths:
           * `at_risk` - At Risk
           * `archived` - Archived
       tags:
-      - api
+      - Projects
       security:
       - jwtAuth: []
       responses:
@@ -1194,7 +1336,7 @@ paths:
     post:
       operationId: api_v1_projects_create
       tags:
-      - api
+      - Projects
       requestBody:
         content:
           application/json:
@@ -1228,7 +1370,7 @@ paths:
         description: A UUID string identifying this project.
         required: true
       tags:
-      - api
+      - Projects
       security:
       - jwtAuth: []
       responses:
@@ -1249,7 +1391,7 @@ paths:
         description: A UUID string identifying this project.
         required: true
       tags:
-      - api
+      - Projects
       requestBody:
         content:
           application/json:
@@ -1282,7 +1424,7 @@ paths:
         description: A UUID string identifying this project.
         required: true
       tags:
-      - api
+      - Projects
       requestBody:
         content:
           application/json:
@@ -1314,7 +1456,7 @@ paths:
         description: A UUID string identifying this project.
         required: true
       tags:
-      - api
+      - Projects
       security:
       - jwtAuth: []
       responses:
@@ -1324,7 +1466,7 @@ paths:
     get:
       operationId: api_v1_projects_summary_retrieve
       tags:
-      - api
+      - Projects
       security:
       - jwtAuth: []
       responses:
@@ -1391,7 +1533,7 @@ paths:
           * `ready` - Ready
           * `failed` - Failed
       tags:
-      - api
+      - Reports
       security:
       - jwtAuth: []
       responses:
@@ -1404,7 +1546,7 @@ paths:
     post:
       operationId: api_v1_reports_create
       tags:
-      - api
+      - Reports
       requestBody:
         content:
           application/json:
@@ -1438,7 +1580,7 @@ paths:
         description: A UUID string identifying this report.
         required: true
       tags:
-      - api
+      - Reports
       security:
       - jwtAuth: []
       responses:
@@ -1459,7 +1601,7 @@ paths:
         description: A UUID string identifying this report.
         required: true
       tags:
-      - api
+      - Reports
       requestBody:
         content:
           application/json:
@@ -1492,7 +1634,7 @@ paths:
         description: A UUID string identifying this report.
         required: true
       tags:
-      - api
+      - Reports
       requestBody:
         content:
           application/json:
@@ -1524,7 +1666,7 @@ paths:
         description: A UUID string identifying this report.
         required: true
       tags:
-      - api
+      - Reports
       security:
       - jwtAuth: []
       responses:
@@ -1542,7 +1684,7 @@ paths:
         description: A UUID string identifying this report.
         required: true
       tags:
-      - api
+      - Reports
       security:
       - jwtAuth: []
       responses:
@@ -1569,7 +1711,7 @@ paths:
         schema:
           type: integer
       tags:
-      - api
+      - Support Tickets
       security:
       - jwtAuth: []
       responses:
@@ -1582,7 +1724,7 @@ paths:
     post:
       operationId: api_v1_support_tickets_create
       tags:
-      - api
+      - Support Tickets
       requestBody:
         content:
           application/json:
@@ -1616,7 +1758,7 @@ paths:
         description: A UUID string identifying this support ticket.
         required: true
       tags:
-      - api
+      - Support Tickets
       security:
       - jwtAuth: []
       responses:
@@ -1706,7 +1848,7 @@ paths:
           * `in_progress` - In Progress
           * `completed` - Completed
       tags:
-      - api
+      - Tasks
       security:
       - jwtAuth: []
       responses:
@@ -1719,7 +1861,7 @@ paths:
     post:
       operationId: api_v1_tasks_create
       tags:
-      - api
+      - Tasks
       requestBody:
         content:
           application/json:
@@ -1753,7 +1895,7 @@ paths:
         description: A UUID string identifying this task.
         required: true
       tags:
-      - api
+      - Tasks
       security:
       - jwtAuth: []
       responses:
@@ -1774,7 +1916,7 @@ paths:
         description: A UUID string identifying this task.
         required: true
       tags:
-      - api
+      - Tasks
       requestBody:
         content:
           application/json:
@@ -1807,7 +1949,7 @@ paths:
         description: A UUID string identifying this task.
         required: true
       tags:
-      - api
+      - Tasks
       requestBody:
         content:
           application/json:
@@ -1839,12 +1981,80 @@ paths:
         description: A UUID string identifying this task.
         required: true
       tags:
-      - api
+      - Tasks
       security:
       - jwtAuth: []
       responses:
         '204':
           description: No response body
+  /api/v1/tasks/{id}/start-timer/:
+    post:
+      operationId: api_v1_tasks_start_timer_create
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this task.
+        required: true
+      tags:
+      - Tasks
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Task'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Task'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Task'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+          description: ''
+  /api/v1/tasks/{id}/stop-timer/:
+    post:
+      operationId: api_v1_tasks_stop_timer_create
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this task.
+        required: true
+      tags:
+      - Tasks
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Task'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Task'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Task'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+          description: ''
   /api/v1/time-entries/:
     get:
       operationId: api_v1_time_entries_list
@@ -1877,7 +2087,7 @@ paths:
         schema:
           type: integer
       tags:
-      - api
+      - Time Entries
       security:
       - jwtAuth: []
       responses:
@@ -1890,7 +2100,7 @@ paths:
     post:
       operationId: api_v1_time_entries_create
       tags:
-      - api
+      - Time Entries
       requestBody:
         content:
           application/json:
@@ -1924,7 +2134,7 @@ paths:
         description: A UUID string identifying this time entry.
         required: true
       tags:
-      - api
+      - Time Entries
       security:
       - jwtAuth: []
       responses:
@@ -1945,7 +2155,7 @@ paths:
         description: A UUID string identifying this time entry.
         required: true
       tags:
-      - api
+      - Time Entries
       requestBody:
         content:
           application/json:
@@ -1978,7 +2188,7 @@ paths:
         description: A UUID string identifying this time entry.
         required: true
       tags:
-      - api
+      - Time Entries
       requestBody:
         content:
           application/json:
@@ -2010,152 +2220,7 @@ paths:
         description: A UUID string identifying this time entry.
         required: true
       tags:
-      - api
-      security:
-      - jwtAuth: []
-      responses:
-        '204':
-          description: No response body
-  /api/v1/workspaces/:
-    get:
-      operationId: api_v1_workspaces_list
-      tags:
-      - api
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Workspace'
-          description: ''
-    post:
-      operationId: api_v1_workspaces_create
-      tags:
-      - api
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/Workspace'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/Workspace'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/Workspace'
-        required: true
-      security:
-      - jwtAuth: []
-      responses:
-        '201':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Workspace'
-          description: ''
-  /api/v1/workspaces/{id}/:
-    get:
-      operationId: api_v1_workspaces_retrieve
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this workspace.
-        required: true
-      tags:
-      - api
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Workspace'
-          description: ''
-    put:
-      operationId: api_v1_workspaces_update
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this workspace.
-        required: true
-      tags:
-      - api
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/Workspace'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/Workspace'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/Workspace'
-        required: true
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Workspace'
-          description: ''
-    patch:
-      operationId: api_v1_workspaces_partial_update
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this workspace.
-        required: true
-      tags:
-      - api
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PatchedWorkspace'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/PatchedWorkspace'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/PatchedWorkspace'
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Workspace'
-          description: ''
-    delete:
-      operationId: api_v1_workspaces_destroy
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this workspace.
-        required: true
-      tags:
-      - api
+      - Time Entries
       security:
       - jwtAuth: []
       responses:
@@ -2200,9 +2265,10 @@ components:
           type: string
           format: uuid
           readOnly: true
-        workspace:
+        department:
           type: string
           format: uuid
+          nullable: true
         title:
           type: string
           maxLength: 180
@@ -2242,7 +2308,42 @@ components:
       - participants
       - unread_count
       - updated_at
-      - workspace
+    Department:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        name:
+          type: string
+          maxLength: 150
+        code:
+          type: string
+          maxLength: 32
+          pattern: ^[-a-zA-Z0-9_]+$
+        description:
+          type: string
+        is_active:
+          type: boolean
+        member_count:
+          type: integer
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - code
+      - created_at
+      - id
+      - member_count
+      - name
+      - updated_at
     Event:
       type: object
       properties:
@@ -2250,14 +2351,16 @@ components:
           type: string
           format: uuid
           readOnly: true
-        workspace:
+        department:
           type: string
           format: uuid
+          nullable: true
         title:
           type: string
           maxLength: 180
         event_type:
-          $ref: '#/components/schemas/EventTypeEnum'
+          type: string
+          maxLength: 80
         description:
           type: string
         starts_at:
@@ -2302,19 +2405,6 @@ components:
       - starts_at
       - title
       - updated_at
-      - workspace
-    EventTypeEnum:
-      enum:
-      - meeting
-      - review
-      - demo
-      - deadline
-      type: string
-      description: |-
-        * `meeting` - Meeting
-        * `review` - Review
-        * `demo` - Demo
-        * `deadline` - Deadline
     FAQ:
       type: object
       properties:
@@ -2341,9 +2431,10 @@ components:
           type: string
           format: uuid
           readOnly: true
-        workspace:
+        department:
           type: string
           format: uuid
+          nullable: true
         user:
           type: integer
         user_detail:
@@ -2375,7 +2466,6 @@ components:
       - joined_at
       - user
       - user_detail
-      - workspace
     Message:
       type: object
       properties:
@@ -2441,6 +2531,29 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Conversation'
+    PaginatedDepartmentList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Department'
     PaginatedEventList:
       type: object
       required:
@@ -2649,9 +2762,10 @@ components:
           type: string
           format: uuid
           readOnly: true
-        workspace:
+        department:
           type: string
           format: uuid
+          nullable: true
         title:
           type: string
           maxLength: 180
@@ -2683,6 +2797,35 @@ components:
           type: string
           format: date-time
           readOnly: true
+    PatchedDepartment:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        name:
+          type: string
+          maxLength: 150
+        code:
+          type: string
+          maxLength: 32
+          pattern: ^[-a-zA-Z0-9_]+$
+        description:
+          type: string
+        is_active:
+          type: boolean
+        member_count:
+          type: integer
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
     PatchedEvent:
       type: object
       properties:
@@ -2690,14 +2833,16 @@ components:
           type: string
           format: uuid
           readOnly: true
-        workspace:
+        department:
           type: string
           format: uuid
+          nullable: true
         title:
           type: string
           maxLength: 180
         event_type:
-          $ref: '#/components/schemas/EventTypeEnum'
+          type: string
+          maxLength: 80
         description:
           type: string
         starts_at:
@@ -2740,9 +2885,10 @@ components:
           type: string
           format: uuid
           readOnly: true
-        workspace:
+        department:
           type: string
           format: uuid
+          nullable: true
         user:
           type: integer
         user_detail:
@@ -2847,9 +2993,10 @@ components:
           type: string
           format: uuid
           readOnly: true
-        workspace:
+        department:
           type: string
           format: uuid
+          nullable: true
         name:
           type: string
           maxLength: 180
@@ -2903,9 +3050,10 @@ components:
           type: string
           format: uuid
           readOnly: true
-        workspace:
+        department:
           type: string
           format: uuid
+          nullable: true
         name:
           type: string
           maxLength: 180
@@ -3018,6 +3166,7 @@ components:
         ended_at:
           type: string
           format: date-time
+          nullable: true
         minutes:
           type: integer
           readOnly: true
@@ -3064,34 +3213,6 @@ components:
         date_format:
           type: string
           maxLength: 16
-    PatchedWorkspace:
-      type: object
-      properties:
-        id:
-          type: string
-          format: uuid
-          readOnly: true
-        name:
-          type: string
-          maxLength: 150
-        slug:
-          type: string
-          maxLength: 50
-          pattern: ^[-a-zA-Z0-9_]+$
-        owner:
-          type: integer
-          readOnly: true
-        owner_detail:
-          allOf:
-          - $ref: '#/components/schemas/UserBrief'
-          readOnly: true
-        member_count:
-          type: integer
-          readOnly: true
-        created_at:
-          type: string
-          format: date-time
-          readOnly: true
     PriorityEnum:
       enum:
       - low
@@ -3156,9 +3277,10 @@ components:
           type: string
           format: uuid
           readOnly: true
-        workspace:
+        department:
           type: string
           format: uuid
+          nullable: true
         name:
           type: string
           maxLength: 180
@@ -3215,7 +3337,6 @@ components:
       - progress
       - task_count
       - updated_at
-      - workspace
     ProjectStatusEnum:
       enum:
       - not_started
@@ -3230,37 +3351,6 @@ components:
         * `completed` - Completed
         * `at_risk` - At Risk
         * `archived` - Archived
-    Register:
-      type: object
-      properties:
-        id:
-          type: integer
-          readOnly: true
-        email:
-          type: string
-          format: email
-          maxLength: 254
-        username:
-          type: string
-          description: Required. 150 characters or fewer. Letters, digits and @/./+/-/_
-            only.
-          pattern: ^[\w.@+-]+$
-          maxLength: 150
-        first_name:
-          type: string
-          maxLength: 150
-        last_name:
-          type: string
-          maxLength: 150
-        password:
-          type: string
-          writeOnly: true
-          minLength: 8
-      required:
-      - email
-      - id
-      - password
-      - username
     Report:
       type: object
       properties:
@@ -3268,9 +3358,10 @@ components:
           type: string
           format: uuid
           readOnly: true
-        workspace:
+        department:
           type: string
           format: uuid
+          nullable: true
         name:
           type: string
           maxLength: 180
@@ -3313,7 +3404,6 @@ components:
       - result
       - status
       - updated_at
-      - workspace
     ReportStatusEnum:
       enum:
       - processing
@@ -3506,6 +3596,7 @@ components:
         ended_at:
           type: string
           format: date-time
+          nullable: true
         minutes:
           type: integer
           readOnly: true
@@ -3518,7 +3609,6 @@ components:
           readOnly: true
       required:
       - created_at
-      - ended_at
       - id
       - minutes
       - started_at
@@ -3620,42 +3710,6 @@ components:
         date_format:
           type: string
           maxLength: 16
-    Workspace:
-      type: object
-      properties:
-        id:
-          type: string
-          format: uuid
-          readOnly: true
-        name:
-          type: string
-          maxLength: 150
-        slug:
-          type: string
-          maxLength: 50
-          pattern: ^[-a-zA-Z0-9_]+$
-        owner:
-          type: integer
-          readOnly: true
-        owner_detail:
-          allOf:
-          - $ref: '#/components/schemas/UserBrief'
-          readOnly: true
-        member_count:
-          type: integer
-          readOnly: true
-        created_at:
-          type: string
-          format: date-time
-          readOnly: true
-      required:
-      - created_at
-      - id
-      - member_count
-      - name
-      - owner
-      - owner_detail
-      - slug
   securitySchemes:
     jwtAuth:
       type: http

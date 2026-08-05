@@ -1,7 +1,6 @@
 from django.contrib.auth.hashers import identify_hasher, make_password
 from django.utils.text import slugify
-from import_export import fields, resources
-from import_export.widgets import ForeignKeyWidget
+from import_export import resources
 
 from .models import (
     Conversation,
@@ -18,7 +17,6 @@ from .models import (
     TimeEntry,
     User,
     UserPreference,
-    Workspace,
 )
 
 
@@ -57,28 +55,16 @@ class UserResource(TaskFlowResource):
         exclude = ("user_permissions",)
 
 
-class WorkspaceResource(TaskFlowResource):
-    class Meta(TaskFlowResource.Meta):
-        model = Workspace
-
-
 class DepartmentResource(TaskFlowResource):
-    workspace = fields.Field(
-        column_name="workspace",
-        attribute="workspace",
-        widget=ForeignKeyWidget(Workspace, field="name"),
-    )
-
     def before_import_row(self, row, **kwargs):
         if not row.get("code") and row.get("name"):
             row["code"] = slugify(row["name"])[:32]
 
     class Meta(TaskFlowResource.Meta):
         model = Department
-        import_id_fields = ("workspace", "code")
+        import_id_fields = ("code",)
         fields = (
             "id",
-            "workspace",
             "name",
             "code",
             "description",

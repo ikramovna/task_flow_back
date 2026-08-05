@@ -3,25 +3,22 @@ from datetime import date, datetime, time, timedelta
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
-from apps.models import Conversation, ConversationParticipant, Department, Event, FAQ, Membership, Message, Project, Report, Task, User, UserPreference, Workspace
+from apps.models import Conversation, ConversationParticipant, Department, Event, FAQ, Membership, Message, Project, Report, Task, User, UserPreference
 
 
 class Command(BaseCommand):
-    help = "Create an idempotent TaskFlow demo workspace"
+    help = "Create idempotent TaskFlow demo data"
 
     def handle(self, *args, **options):
         owner, _ = User.objects.get_or_create(email="admin@taskflow.local", defaults={"username": "taskflow-admin", "first_name": "Be", "last_name": "Confidency"})
         owner.set_password("TaskFlow123!")
         owner.save()
         UserPreference.objects.get_or_create(user=owner)
-        workspace, _ = Workspace.objects.get_or_create(slug="taskflow-demo", defaults={"name": "TaskFlow Demo", "owner": owner})
         department, _ = Department.objects.get_or_create(
-            workspace=workspace,
             code="engineering",
             defaults={"name": "Engineering"},
         )
         owner_membership, _ = Membership.objects.get_or_create(
-            workspace=workspace,
             user=owner,
             defaults={"role": Membership.Role.OWNER, "department": department},
         )
@@ -40,7 +37,6 @@ class Command(BaseCommand):
         for index, (email, first, last, title) in enumerate(people):
             user, _ = User.objects.get_or_create(email=email, defaults={"username": f"demo-{index}", "first_name": first, "last_name": last, "job_title": title})
             membership, _ = Membership.objects.get_or_create(
-                workspace=workspace,
                 user=user,
                 defaults={"department": department},
             )
@@ -59,7 +55,7 @@ class Command(BaseCommand):
         ]
         projects = []
         for name, project_status, priority, days in projects_data:
-            project, _ = Project.objects.get_or_create(workspace=workspace, name=name, defaults={"department": department, "status": project_status, "priority": priority, "due_date": date.today() + timedelta(days=days), "created_by": owner})
+            project, _ = Project.objects.get_or_create(department=department, name=name, defaults={"status": project_status, "priority": priority, "due_date": date.today() + timedelta(days=days), "created_by": owner})
             if project.department_id is None:
                 project.department = department
                 project.save(update_fields=["department", "updated_at"])
@@ -79,9 +75,9 @@ class Command(BaseCommand):
             task.assignees.set([members[index % len(members)]])
 
         start = timezone.make_aware(datetime.combine(date.today(), time(9)))
-        Event.objects.get_or_create(workspace=workspace, title="Sprint Planning", starts_at=start, defaults={"ends_at": start + timedelta(minutes=90), "event_type": Event.Type.MEETING, "location": "Conference room A / Virtual", "created_by": owner})
+        Event.objects.get_or_create(department=department, title="Sprint Planning", starts_at=start, defaults={"ends_at": start + timedelta(minutes=90), "event_type": Event.Type.MEETING, "location": "Conference room A / Virtual", "created_by": owner})
 
-        conversation, _ = Conversation.objects.get_or_create(workspace=workspace, title="Sarah Johnson", is_group=False)
+        conversation, _ = Conversation.objects.get_or_create(department=department, title="Sarah Johnson", is_group=False)
         ConversationParticipant.objects.get_or_create(conversation=conversation, user=owner)
         ConversationParticipant.objects.get_or_create(conversation=conversation, user=members[0])
         if not conversation.messages.exists():
@@ -89,13 +85,13 @@ class Command(BaseCommand):
             Message.objects.create(conversation=conversation, sender=owner, body="Great! What are the main changes?")
 
         for name, report_type in [("Weekly Productivity Summary", Report.Type.WEEKLY_PROGRESS), ("Project Risk Analysis", Report.Type.PROJECT_STATUS), ("Team Utilization Report", Report.Type.TEAM_PERFORMANCE)]:
-            Report.objects.get_or_create(workspace=workspace, name=name, defaults={"report_type": report_type, "status": Report.Status.READY, "generated_by": owner})
+            Report.objects.get_or_create(department=department, name=name, defaults={"report_type": report_type, "status": Report.Status.READY, "generated_by": owner})
 
         faq_items = [
             ("How do I create a new task?", "Open Tasks, select Create Task, fill in the details and assign it to a team member."),
-            ("How do I add team members?", "Open Team Members and use Add Team Member. Workspace managers and admins can invite users."),
+            ("How do I add team members?", "Open Team Members and use Add Team Member. Department managers and admins can invite users."),
             ("How can I track project progress?", "The Projects and Analytics screens calculate progress from completed project tasks."),
-            ("How do I assign tasks to team members?", "Choose one or more workspace members in the task assignees field."),
+            ("How do I assign tasks to team members?", "Choose one or more department members in the task assignees field."),
         ]
         for order, (question, answer) in enumerate(faq_items):
             FAQ.objects.get_or_create(question=question, defaults={"answer": answer, "sort_order": order})

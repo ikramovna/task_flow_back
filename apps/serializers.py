@@ -1,10 +1,9 @@
-from django.db import transaction
 from django.contrib.auth.password_validation import validate_password
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
 from rest_framework import serializers
 
-from .models import Conversation, ConversationParticipant, Department, Event, FAQ, Membership, Message, Project, Report, SupportTicket, Task, TimeEntry, User, UserPreference, Workspace
+from .models import Conversation, ConversationParticipant, Department, Event, FAQ, Membership, Message, Project, Report, SupportTicket, Task, TimeEntry, User, UserPreference
 
 
 class UserBriefSerializer(serializers.ModelSerializer):
@@ -29,7 +28,7 @@ class DepartmentSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Department
-        fields = ("id", "workspace", "name", "code", "description", "is_active", "member_count", "created_at", "updated_at")
+        fields = ("id", "name", "code", "description", "is_active", "member_count", "created_at", "updated_at")
 
 
 class MembershipSerializer(serializers.ModelSerializer):
@@ -40,20 +39,17 @@ class MembershipSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Membership
-        fields = ("id", "workspace", "department", "user", "user_detail", "role", "is_active", "joined_at", "efficiency", "completed_tasks", "in_progress_tasks")
+        fields = ("id", "department", "user", "user_detail", "role", "is_active", "joined_at", "efficiency", "completed_tasks", "in_progress_tasks")
         read_only_fields = ("joined_at",)
 
     def validate(self, attrs):
-        workspace = attrs.get("workspace", getattr(self.instance, "workspace", None))
         department = attrs.get("department", getattr(self.instance, "department", None))
         if self.instance is None and not department:
             raise serializers.ValidationError({"department": "This field is required."})
-        if department and workspace and department.workspace_id != workspace.id:
-            raise serializers.ValidationError({"department": "Department must belong to the selected workspace."})
         return attrs
 
     def _task_counts(self, obj):
-        qs = obj.user.assigned_tasks.filter(project__workspace=obj.workspace)
+        qs = obj.user.assigned_tasks.filter(project__department=obj.department)
         return qs.count(), qs.filter(status=Task.Status.COMPLETED).count(), qs.filter(status=Task.Status.IN_PROGRESS).count()
 
     def get_efficiency(self, obj) -> int:
@@ -67,24 +63,6 @@ class MembershipSerializer(serializers.ModelSerializer):
         return self._task_counts(obj)[2]
 
 
-class WorkspaceSerializer(serializers.ModelSerializer):
-    owner_detail = UserBriefSerializer(source="owner", read_only=True)
-    member_count = serializers.IntegerField(read_only=True)
-    department_count = serializers.IntegerField(read_only=True)
-
-    class Meta:
-        model = Workspace
-        fields = ("id", "name", "slug", "owner", "owner_detail", "member_count", "department_count", "created_at")
-        read_only_fields = ("owner",)
-
-    @transaction.atomic
-    def create(self, validated_data):
-        user = self.context["request"].user
-        workspace = Workspace.objects.create(owner=user, **validated_data)
-        Membership.objects.create(workspace=workspace, user=user, role=Membership.Role.OWNER)
-        return workspace
-
-
 class ProjectSerializer(serializers.ModelSerializer):
     member_details = UserBriefSerializer(source="members", many=True, read_only=True)
     progress = serializers.IntegerField(read_only=True)
@@ -93,22 +71,18 @@ class ProjectSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Project
-        fields = ("id", "workspace", "department", "name", "description", "status", "priority", "start_date", "due_date", "members", "member_details", "created_by", "progress", "task_count", "completed_task_count", "created_at", "updated_at")
+        fields = ("id", "department", "name", "description", "status", "priority", "start_date", "due_date", "members", "member_details", "created_by", "progress", "task_count", "completed_task_count", "created_at", "updated_at")
         read_only_fields = ("created_by",)
 
     def validate(self, attrs):
-        workspace = attrs.get("workspace") or self.instance.workspace
         department = attrs.get("department", getattr(self.instance, "department", None))
         if not department:
             raise serializers.ValidationError({"department": "This field is required."})
-        if department.workspace_id != workspace.id:
-            raise serializers.ValidationError({"department": "Department must belong to the project workspace."})
         users = attrs.get("members", [])
         invalid = [
             u.id
             for u in users
             if not u.memberships.filter(
-                workspace=workspace,
                 department=department,
                 is_active=True,
             ).exists()
@@ -131,7 +105,6 @@ class TaskSerializer(serializers.ModelSerializer):
         project = attrs.get("project") or self.instance.project
         for user in attrs.get("assignees", []):
             if not user.memberships.filter(
-                workspace=project.workspace,
                 department=project.department,
                 is_active=True,
             ).exists():
@@ -144,7 +117,7 @@ class EventSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Event
-        fields = ("id", "workspace", "title", "event_type", "description", "starts_at", "ends_at", "location", "meeting_url", "attendees", "attendee_details", "created_by", "created_at", "updated_at")
+        fields = ("id", "department", "title", "event_type", "description", "starts_at", "ends_at", "location", "meeting_url", "attendees", "attendee_details", "created_by", "created_at", "updated_at")
         read_only_fields = ("created_by",)
 
     def validate(self, attrs):
@@ -152,10 +125,10 @@ class EventSerializer(serializers.ModelSerializer):
         ends = attrs.get("ends_at", getattr(self.instance, "ends_at", None))
         if starts and ends and ends <= starts:
             raise serializers.ValidationError({"ends_at": "Event must end after it starts."})
-        workspace = attrs.get("workspace") or self.instance.workspace
+        department = attrs.get("department") or self.instance.department
         for user in attrs.get("attendees", []):
-            if not user.memberships.filter(workspace=workspace, is_active=True).exists():
-                raise serializers.ValidationError({"attendees": "Every attendee must belong to the workspace."})
+            if not user.memberships.filter(department=department, is_active=True).exists():
+                raise serializers.ValidationError({"attendees": "Every attendee must belong to the department."})
         return attrs
 
 
@@ -241,7 +214,7 @@ class ConversationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Conversation
-        fields = ("id", "workspace", "title", "is_group", "participants", "participant_details", "last_message", "unread_count", "created_at", "updated_at")
+        fields = ("id", "department", "title", "is_group", "participants", "participant_details", "last_message", "unread_count", "created_at", "updated_at")
 
     def get_last_message(self, obj) -> dict | None:
         message = obj.messages.filter(is_deleted=False).last()
@@ -256,10 +229,10 @@ class ConversationSerializer(serializers.ModelSerializer):
         return qs.filter(created_at__gt=link.last_read_at).count() if link and link.last_read_at else qs.count()
 
     def validate(self, attrs):
-        workspace = attrs.get("workspace") or self.instance.workspace
+        department = attrs.get("department") or self.instance.department
         for user in attrs.get("participants", []):
-            if not user.memberships.filter(workspace=workspace, is_active=True).exists():
-                raise serializers.ValidationError({"participants": "Every participant must belong to the workspace."})
+            if not user.memberships.filter(department=department, is_active=True).exists():
+                raise serializers.ValidationError({"participants": "Every participant must belong to the department."})
         return attrs
 
 
@@ -268,7 +241,7 @@ class ReportSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Report
-        fields = ("id", "workspace", "name", "report_type", "status", "parameters", "result", "file", "generated_by", "generated_by_detail", "created_at", "updated_at")
+        fields = ("id", "department", "name", "report_type", "status", "parameters", "result", "file", "generated_by", "generated_by_detail", "created_at", "updated_at")
         read_only_fields = ("status", "result", "file", "generated_by")
 
 

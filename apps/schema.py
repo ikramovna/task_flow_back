@@ -9,7 +9,7 @@ class TaskFlowAutoSchema(AutoSchema):
     TAGS = {
         "auth": "Auth",
         "me": "Auth",
-        "workspaces": "Workspaces",
+        "departments": "Departments",
         "members": "Members",
         "projects": "Projects",
         "tasks": "Tasks",
