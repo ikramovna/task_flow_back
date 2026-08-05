@@ -23,10 +23,10 @@ from rest_framework.views import APIView
 from drf_spectacular.utils import extend_schema, inline_serializer
 
 from .filters import EventFilter, TaskFilter
-from .models import Conversation, ConversationParticipant, Department, Event, FAQ, Message, Report, SupportTicket, Task, TimeEntry, User, UserPreference
+from .models import Conversation, ConversationParticipant, Department, Event, Message, Report, Task, TimeEntry, User, UserPreference
 from .pagination import StandardPagination
 from .permissions import IsDepartmentMember
-from .serializers import AccountDeleteSerializer, ConversationSerializer, DepartmentSerializer, EventSerializer, FAQSerializer, MemberSerializer, MessageSerializer, PasswordChangeSerializer, PasswordResetConfirmSerializer, PasswordResetRequestSerializer, ProfileSerializer, ReportSerializer, SupportTicketSerializer, TaskSerializer, TimeEntrySerializer, TwoFactorSerializer, UserPreferenceSerializer
+from .serializers import AccountDeleteSerializer, ConversationSerializer, DepartmentSerializer, EventSerializer, MemberSerializer, MessageSerializer, PasswordChangeSerializer, PasswordResetConfirmSerializer, PasswordResetRequestSerializer, ProfileSerializer, ReportSerializer, TaskSerializer, TimeEntrySerializer, TwoFactorSerializer, UserPreferenceSerializer
 
 
 class PasswordResetRequestView(generics.GenericAPIView):
@@ -527,15 +527,6 @@ class ReportViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
         return FileResponse(report.file.open("rb"), as_attachment=True, filename=f"{report.name}.csv")
 
 
-class FAQViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = FAQ.objects.filter(is_active=True)
-    serializer_class = FAQSerializer
-    permission_classes = (AllowAny,)
-    pagination_class = None
-    filter_backends = (filters.SearchFilter,)
-    search_fields = ("question", "answer", "category")
-
-
 class TimeEntryViewSet(viewsets.ModelViewSet):
     queryset = TimeEntry.objects.none()
     serializer_class = TimeEntrySerializer
@@ -572,18 +563,3 @@ class TimeEntryViewSet(viewsets.ModelViewSet):
         self._ensure_owner_or_manager(instance)
         instance.delete()
 
-
-class SupportTicketViewSet(viewsets.ModelViewSet):
-    queryset = SupportTicket.objects.none()
-    serializer_class = SupportTicketSerializer
-    permission_classes = (IsAuthenticated,)
-    pagination_class = StandardPagination
-    http_method_names = ("get", "post", "head", "options")
-
-    def get_queryset(self):
-        if getattr(self, "swagger_fake_view", False):
-            return self.queryset
-        return SupportTicket.objects.filter(user=self.request.user)
-
-    def perform_create(self, serializer):
-        serializer.save(user=self.request.user)

@@ -3,7 +3,7 @@ from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
 from rest_framework import serializers
 
-from .models import Conversation, ConversationParticipant, Department, Event, FAQ, Message, Report, SupportTicket, Task, TimeEntry, User, UserPreference
+from .models import Conversation, ConversationParticipant, Department, Event, Message, Report, Task, TimeEntry, User, UserPreference
 
 
 class UserBriefSerializer(serializers.ModelSerializer):
@@ -249,15 +249,3 @@ class TimeEntrySerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({"ended_at": "End time must be after start time."})
         return attrs
 
-
-class FAQSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = FAQ
-        fields = ("id", "question", "answer", "category")
-
-
-class SupportTicketSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = SupportTicket
-        fields = ("id", "subject", "message", "status", "priority", "created_at", "updated_at")
-        read_only_fields = ("status",)

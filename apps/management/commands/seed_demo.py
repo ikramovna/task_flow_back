@@ -3,7 +3,7 @@ from datetime import date, datetime, time, timedelta
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
-from apps.models import Conversation, ConversationParticipant, Department, Event, FAQ, Message, Report, Task, User, UserPreference
+from apps.models import Conversation, ConversationParticipant, Department, Event, Message, Report, Task, User, UserPreference
 
 
 class Command(BaseCommand):
@@ -62,12 +62,4 @@ class Command(BaseCommand):
         for name, report_type in [("Weekly Productivity Summary", Report.Type.WEEKLY_PROGRESS), ("Department Status", Report.Type.DEPARTMENT_STATUS), ("Team Utilization Report", Report.Type.TEAM_PERFORMANCE)]:
             Report.objects.get_or_create(department=department, name=name, defaults={"report_type": report_type, "status": Report.Status.READY, "generated_by": owner})
 
-        faq_items = [
-            ("How do I create a new task?", "Open Tasks, select Create Task, fill in the details and assign it to a team member."),
-            ("How do I add team members?", "Open Team Members and use Add Team Member. Department managers and admins can invite users."),
-            ("How can I track department progress?", "The Analytics screen calculates progress from completed department tasks."),
-            ("How do I assign tasks to team members?", "Choose one or more department members in the task assignees field."),
-        ]
-        for order, (question, answer) in enumerate(faq_items):
-            FAQ.objects.get_or_create(question=question, defaults={"answer": answer, "sort_order": order})
         self.stdout.write(self.style.SUCCESS("Demo ready: admin@taskflow.local / TaskFlow123!"))

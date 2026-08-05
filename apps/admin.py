@@ -3,16 +3,14 @@ from django.contrib.auth.admin import UserAdmin
 from import_export.admin import ImportExportMixin, ImportExportModelAdmin
 
 from .forms import EventAdminForm
-from .models import Conversation, ConversationParticipant, Department, Event, FAQ, Message, Report, SupportTicket, Task, TimeEntry, User, UserPreference
+from .models import Conversation, ConversationParticipant, Department, Event, Message, Report, Task, TimeEntry, User, UserPreference
 from .resources import (
     ConversationParticipantResource,
     ConversationResource,
     DepartmentResource,
     EventResource,
-    FAQResource,
     MessageResource,
     ReportResource,
-    SupportTicketResource,
     TaskResource,
     TimeEntryResource,
     UserPreferenceResource,
@@ -145,27 +143,6 @@ class TimeEntryAdmin(ImportExportModelAdmin):
     autocomplete_fields = ("task", "user")
     readonly_fields = ("created_at", "updated_at", "minutes")
     date_hierarchy = "started_at"
-
-
-@admin.register(FAQ)
-class FAQAdmin(ImportExportModelAdmin):
-    resource_classes = (FAQResource,)
-    list_display = ("question", "category", "sort_order", "is_active", "updated_at")
-    list_filter = ("is_active", "category")
-    search_fields = ("question", "answer", "category")
-    list_editable = ("sort_order", "is_active")
-    readonly_fields = ("created_at", "updated_at")
-
-
-@admin.register(SupportTicket)
-class SupportTicketAdmin(ImportExportModelAdmin):
-    resource_classes = (SupportTicketResource,)
-    list_display = ("subject", "user", "status", "priority", "created_at")
-    list_filter = ("status", "priority", "created_at")
-    search_fields = ("subject", "message", "user__email", "user__first_name", "user__last_name")
-    autocomplete_fields = ("user",)
-    readonly_fields = ("created_at", "updated_at")
-    date_hierarchy = "created_at"
 
 
 admin.site.site_header = "TaskFlow Administration"

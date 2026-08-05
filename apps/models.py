@@ -193,35 +193,3 @@ class TimeEntry(TimeStampedModel):
             return 0
         return max(0, round((self.ended_at - self.started_at).total_seconds() / 60))
 
-
-class FAQ(TimeStampedModel):
-    question = models.CharField(max_length=250)
-    answer = models.TextField()
-    category = models.CharField(max_length=80, blank=True)
-    sort_order = models.PositiveIntegerField(default=0)
-    is_active = models.BooleanField(default=True)
-
-    class Meta:
-        ordering = ["sort_order", "question"]
-
-
-class SupportTicket(TimeStampedModel):
-    class Status(models.TextChoices):
-        OPEN = "open", "Open"
-        IN_PROGRESS = "in_progress", "In Progress"
-        RESOLVED = "resolved", "Resolved"
-        CLOSED = "closed", "Closed"
-
-    class Priority(models.TextChoices):
-        LOW = "low", "Low"
-        MEDIUM = "medium", "Medium"
-        HIGH = "high", "High"
-
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="support_tickets")
-    subject = models.CharField(max_length=200)
-    message = models.TextField()
-    status = models.CharField(max_length=16, choices=Status.choices, default=Status.OPEN)
-    priority = models.CharField(max_length=10, choices=Priority.choices, default=Priority.MEDIUM)
-
-    class Meta:
-        ordering = ["-created_at"]

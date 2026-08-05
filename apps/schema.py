@@ -17,8 +17,6 @@ class TaskFlowAutoSchema(AutoSchema):
         "messages": "Messages",
         "reports": "Reports",
         "time-entries": "Time Entries",
-        "faqs": "FAQs",
-        "support-tickets": "Support Tickets",
         "analytics": "Analytics",
     }
 

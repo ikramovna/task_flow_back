@@ -38,7 +38,5 @@ All list endpoints support pagination. Tasks, members and events accept `?depart
 | Password | `POST /api/v1/me/change-password/` |
 | 2FA preference | `PATCH /api/v1/me/two-factor/` |
 | Delete account | `POST /api/v1/me/delete-account/` |
-| Help FAQ | `GET /api/v1/faqs/` |
-| Support ticket | `/api/v1/support-tickets/` |
 
 Statuses use API-safe values: `not_started`, `in_progress`, `completed`, `at_risk`, `archived`. Priorities are `low`, `medium`, `high`.

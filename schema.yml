@@ -633,53 +633,6 @@ paths:
       responses:
         '204':
           description: No response body
-  /api/v1/faqs/:
-    get:
-      operationId: api_v1_faqs_list
-      parameters:
-      - name: search
-        required: false
-        in: query
-        description: A search term.
-        schema:
-          type: string
-      tags:
-      - FAQs
-      security:
-      - jwtAuth: []
-      - {}
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/FAQ'
-          description: ''
-  /api/v1/faqs/{id}/:
-    get:
-      operationId: api_v1_faqs_retrieve
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this faq.
-        required: true
-      tags:
-      - FAQs
-      security:
-      - jwtAuth: []
-      - {}
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/FAQ'
-          description: ''
   /api/v1/me/:
     get:
       operationId: api_v1_me_retrieve
@@ -1467,80 +1420,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/Report'
           description: ''
-  /api/v1/support-tickets/:
-    get:
-      operationId: api_v1_support_tickets_list
-      parameters:
-      - name: page
-        required: false
-        in: query
-        description: A page number within the paginated result set.
-        schema:
-          type: integer
-      - name: page_size
-        required: false
-        in: query
-        description: Number of results to return per page.
-        schema:
-          type: integer
-      tags:
-      - Support Tickets
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PaginatedSupportTicketList'
-          description: ''
-    post:
-      operationId: api_v1_support_tickets_create
-      tags:
-      - Support Tickets
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/SupportTicket'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/SupportTicket'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/SupportTicket'
-        required: true
-      security:
-      - jwtAuth: []
-      responses:
-        '201':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SupportTicket'
-          description: ''
-  /api/v1/support-tickets/{id}/:
-    get:
-      operationId: api_v1_support_tickets_retrieve
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this support ticket.
-        required: true
-      tags:
-      - Support Tickets
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SupportTicket'
-          description: ''
   /api/v1/tasks/:
     get:
       operationId: api_v1_tasks_list
@@ -2178,25 +2057,6 @@ components:
       - starts_at
       - title
       - updated_at
-    FAQ:
-      type: object
-      properties:
-        id:
-          type: string
-          format: uuid
-          readOnly: true
-        question:
-          type: string
-          maxLength: 250
-        answer:
-          type: string
-        category:
-          type: string
-          maxLength: 80
-      required:
-      - answer
-      - id
-      - question
     Member:
       type: object
       properties:
@@ -2448,29 +2308,6 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Report'
-    PaginatedSupportTicketList:
-      type: object
-      required:
-      - count
-      - results
-      properties:
-        count:
-          type: integer
-          example: 123
-        next:
-          type: string
-          nullable: true
-          format: uri
-          example: http://api.example.org/accounts/?page=4
-        previous:
-          type: string
-          nullable: true
-          format: uri
-          example: http://api.example.org/accounts/?page=2
-        results:
-          type: array
-          items:
-            $ref: '#/components/schemas/SupportTicket'
     PaginatedTaskList:
       type: object
       required:
@@ -3139,51 +2976,6 @@ components:
         * `admin` - Admin
         * `manager` - Manager
         * `member` - Member
-    SupportTicket:
-      type: object
-      properties:
-        id:
-          type: string
-          format: uuid
-          readOnly: true
-        subject:
-          type: string
-          maxLength: 200
-        message:
-          type: string
-        status:
-          allOf:
-          - $ref: '#/components/schemas/SupportTicketStatusEnum'
-          readOnly: true
-        priority:
-          $ref: '#/components/schemas/PriorityEnum'
-        created_at:
-          type: string
-          format: date-time
-          readOnly: true
-        updated_at:
-          type: string
-          format: date-time
-          readOnly: true
-      required:
-      - created_at
-      - id
-      - message
-      - status
-      - subject
-      - updated_at
-    SupportTicketStatusEnum:
-      enum:
-      - open
-      - in_progress
-      - resolved
-      - closed
-      type: string
-      description: |-
-        * `open` - Open
-        * `in_progress` - In Progress
-        * `resolved` - Resolved
-        * `closed` - Closed
     Task:
       type: object
       properties:

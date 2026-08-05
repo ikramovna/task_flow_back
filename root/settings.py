@@ -214,8 +214,6 @@ JAZZMIN_SETTINGS = {
         "apps.Message": "fas fa-message",
         "apps.Report": "fas fa-chart-column",
         "apps.TimeEntry": "fas fa-clock",
-        "apps.FAQ": "fas fa-circle-question",
-        "apps.SupportTicket": "fas fa-headset",
     },
     "order_with_respect_to": [
         "apps",
@@ -225,8 +223,6 @@ JAZZMIN_SETTINGS = {
         "apps.User",
         "apps.TimeEntry",
         "apps.Report",
-        "apps.SupportTicket",
-        "apps.FAQ",
         "auth",
     ],
     "show_sidebar": True,

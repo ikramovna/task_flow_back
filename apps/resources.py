@@ -6,11 +6,9 @@ from .models import (
     Conversation,
     ConversationParticipant,
     Event,
-    FAQ,
     Department,
     Message,
     Report,
-    SupportTicket,
     Task,
     TimeEntry,
     User,
@@ -112,12 +110,3 @@ class TimeEntryResource(TaskFlowResource):
     class Meta(TaskFlowResource.Meta):
         model = TimeEntry
 
-
-class FAQResource(TaskFlowResource):
-    class Meta(TaskFlowResource.Meta):
-        model = FAQ
-
-
-class SupportTicketResource(TaskFlowResource):
-    class Meta(TaskFlowResource.Meta):
-        model = SupportTicket
