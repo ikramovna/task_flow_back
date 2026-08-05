@@ -3,7 +3,7 @@ from datetime import date, datetime, time, timedelta
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
-from apps.models import Conversation, ConversationParticipant, Department, Event, FAQ, Membership, Message, Project, Report, Task, User, UserPreference
+from apps.models import Conversation, ConversationParticipant, Department, Event, FAQ, Message, Report, Task, User, UserPreference
 
 
 class Command(BaseCommand):
@@ -18,13 +18,9 @@ class Command(BaseCommand):
             code="engineering",
             defaults={"name": "Engineering"},
         )
-        owner_membership, _ = Membership.objects.get_or_create(
-            user=owner,
-            defaults={"role": Membership.Role.OWNER, "department": department},
-        )
-        if owner_membership.department_id is None:
-            owner_membership.department = department
-            owner_membership.save(update_fields=["department", "updated_at"])
+        owner.department = department
+        owner.role = User.Role.OWNER
+        owner.save(update_fields=["department", "role"])
 
         people = [
             ("sarah@taskflow.local", "Sarah", "Johnson", "Senior Developer"),
@@ -36,31 +32,10 @@ class Command(BaseCommand):
         members = []
         for index, (email, first, last, title) in enumerate(people):
             user, _ = User.objects.get_or_create(email=email, defaults={"username": f"demo-{index}", "first_name": first, "last_name": last, "job_title": title})
-            membership, _ = Membership.objects.get_or_create(
-                user=user,
-                defaults={"department": department},
-            )
-            if membership.department_id is None:
-                membership.department = department
-                membership.save(update_fields=["department", "updated_at"])
+            if user.department_id is None:
+                user.department = department
+                user.save(update_fields=["department"])
             members.append(user)
-
-        projects_data = [
-            ("Website Redesign", Project.Status.IN_PROGRESS, Project.Priority.HIGH, 15),
-            ("Mobile App Development", Project.Status.IN_PROGRESS, Project.Priority.HIGH, 30),
-            ("API Integration", Project.Status.IN_PROGRESS, Project.Priority.MEDIUM, 20),
-            ("Database Migration", Project.Status.COMPLETED, Project.Priority.HIGH, 10),
-            ("Security Audit", Project.Status.IN_PROGRESS, Project.Priority.LOW, 5),
-            ("Marketing Dashboard", Project.Status.NOT_STARTED, Project.Priority.MEDIUM, 25),
-        ]
-        projects = []
-        for name, project_status, priority, days in projects_data:
-            project, _ = Project.objects.get_or_create(department=department, name=name, defaults={"status": project_status, "priority": priority, "due_date": date.today() + timedelta(days=days), "created_by": owner})
-            if project.department_id is None:
-                project.department = department
-                project.save(update_fields=["department", "updated_at"])
-            project.members.set(members[:3])
-            projects.append(project)
 
         tasks_data = [
             ("Update database schema", Task.Status.COMPLETED, Task.Priority.HIGH, 100, "Development"),
@@ -71,7 +46,7 @@ class Command(BaseCommand):
             ("Create mobile app mockups", Task.Status.IN_PROGRESS, Task.Priority.MEDIUM, 40, "Design"),
         ]
         for index, (title, task_status, priority, progress, category) in enumerate(tasks_data):
-            task, _ = Task.objects.get_or_create(project=projects[index % len(projects)], title=title, defaults={"status": task_status, "priority": priority, "progress": progress, "category": category, "due_date": date.today() + timedelta(days=index + 1), "created_by": owner, "completed_at": timezone.now() if task_status == Task.Status.COMPLETED else None})
+            task, _ = Task.objects.get_or_create(department=department, title=title, defaults={"status": task_status, "priority": priority, "progress": progress, "category": category, "due_date": date.today() + timedelta(days=index + 1), "created_by": owner, "completed_at": timezone.now() if task_status == Task.Status.COMPLETED else None})
             task.assignees.set([members[index % len(members)]])
 
         start = timezone.make_aware(datetime.combine(date.today(), time(9)))
@@ -84,13 +59,13 @@ class Command(BaseCommand):
             Message.objects.create(conversation=conversation, sender=members[0], body="Hi! I wanted to update you on the database schema changes.")
             Message.objects.create(conversation=conversation, sender=owner, body="Great! What are the main changes?")
 
-        for name, report_type in [("Weekly Productivity Summary", Report.Type.WEEKLY_PROGRESS), ("Project Risk Analysis", Report.Type.PROJECT_STATUS), ("Team Utilization Report", Report.Type.TEAM_PERFORMANCE)]:
+        for name, report_type in [("Weekly Productivity Summary", Report.Type.WEEKLY_PROGRESS), ("Department Status", Report.Type.DEPARTMENT_STATUS), ("Team Utilization Report", Report.Type.TEAM_PERFORMANCE)]:
             Report.objects.get_or_create(department=department, name=name, defaults={"report_type": report_type, "status": Report.Status.READY, "generated_by": owner})
 
         faq_items = [
             ("How do I create a new task?", "Open Tasks, select Create Task, fill in the details and assign it to a team member."),
             ("How do I add team members?", "Open Team Members and use Add Team Member. Department managers and admins can invite users."),
-            ("How can I track project progress?", "The Projects and Analytics screens calculate progress from completed project tasks."),
+            ("How can I track department progress?", "The Analytics screen calculates progress from completed department tasks."),
             ("How do I assign tasks to team members?", "Choose one or more department members in the task assignees field."),
         ]
         for order, (question, answer) in enumerate(faq_items):

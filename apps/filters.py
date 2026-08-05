@@ -1,6 +1,6 @@
 import django_filters
 
-from .models import Event, Project, Task
+from .models import Event, Task
 
 
 class TaskFilter(django_filters.FilterSet):
@@ -9,13 +9,7 @@ class TaskFilter(django_filters.FilterSet):
 
     class Meta:
         model = Task
-        fields = ("project", "status", "priority", "category", "assignees")
-
-
-class ProjectFilter(django_filters.FilterSet):
-    class Meta:
-        model = Project
-        fields = ("department", "status", "priority", "members")
+        fields = ("department", "status", "priority", "category", "assignees")
 
 
 class EventFilter(django_filters.FilterSet):

@@ -8,9 +8,7 @@ from .models import (
     Event,
     FAQ,
     Department,
-    Membership,
     Message,
-    Project,
     Report,
     SupportTicket,
     Task,
@@ -73,16 +71,6 @@ class DepartmentResource(TaskFlowResource):
             "updated_at",
         )
         export_order = fields
-
-
-class MembershipResource(TaskFlowResource):
-    class Meta(TaskFlowResource.Meta):
-        model = Membership
-
-
-class ProjectResource(TaskFlowResource):
-    class Meta(TaskFlowResource.Meta):
-        model = Project
 
 
 class TaskResource(TaskFlowResource):

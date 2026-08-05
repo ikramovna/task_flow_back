@@ -10,7 +10,4 @@ class IsDepartmentMember(BasePermission):
             return True
         if not request.user.is_authenticated:
             return False
-        memberships = request.user.memberships.filter(is_active=True)
-        return memberships.filter(role__in=("owner", "admin")).exists() or memberships.filter(
-            department_id=department_id
-        ).exists()
+        return request.user.role in ("owner", "admin") or str(request.user.department_id) == str(department_id)

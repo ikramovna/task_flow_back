@@ -15,11 +15,21 @@ class TimeStampedModel(models.Model):
 
 
 class User(AbstractUser):
+    class Role(models.TextChoices):
+        OWNER = "owner", "Owner"
+        ADMIN = "admin", "Admin"
+        MANAGER = "manager", "Manager"
+        MEMBER = "member", "Member"
+
     email = models.EmailField(unique=True)
     avatar = models.ImageField(upload_to="avatars/", blank=True)
     phone = models.CharField(max_length=32, blank=True)
     job_title = models.CharField(max_length=120, blank=True)
     two_factor_enabled = models.BooleanField(default=False)
+    department = models.ForeignKey(
+        "Department", on_delete=models.SET_NULL, related_name="users", null=True, blank=True
+    )
+    role = models.CharField(max_length=16, choices=Role.choices, default=Role.MEMBER)
 
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = ["username"]
@@ -39,67 +49,6 @@ class Department(TimeStampedModel):
         return self.name
 
 
-class Membership(TimeStampedModel):
-    class Role(models.TextChoices):
-        OWNER = "owner", "Owner"
-        ADMIN = "admin", "Admin"
-        MANAGER = "manager", "Manager"
-        MEMBER = "member", "Member"
-
-    department = models.ForeignKey(
-        Department,
-        on_delete=models.SET_NULL,
-        related_name="memberships",
-        null=True,
-        blank=True,
-    )
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="memberships")
-    role = models.CharField(max_length=16, choices=Role.choices, default=Role.MEMBER)
-    is_active = models.BooleanField(default=True)
-    joined_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        constraints = [models.UniqueConstraint(fields=["user"], name="unique_organization_member")]
-
-
-class Project(TimeStampedModel):
-    class Status(models.TextChoices):
-        NOT_STARTED = "not_started", "Not Started"
-        IN_PROGRESS = "in_progress", "In Progress"
-        COMPLETED = "completed", "Completed"
-        AT_RISK = "at_risk", "At Risk"
-        ARCHIVED = "archived", "Archived"
-
-    class Priority(models.TextChoices):
-        LOW = "low", "Low"
-        MEDIUM = "medium", "Medium"
-        HIGH = "high", "High"
-
-    department = models.ForeignKey(
-        Department,
-        on_delete=models.PROTECT,
-        related_name="projects",
-        null=True,
-        blank=True,
-    )
-    name = models.CharField(max_length=180)
-    description = models.TextField(blank=True)
-    status = models.CharField(max_length=20, choices=Status.choices, default=Status.NOT_STARTED)
-    priority = models.CharField(max_length=10, choices=Priority.choices, default=Priority.MEDIUM)
-    start_date = models.DateField(null=True, blank=True)
-    due_date = models.DateField(null=True, blank=True)
-    members = models.ManyToManyField(User, blank=True, related_name="projects")
-    created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name="created_projects")
-
-    class Meta:
-        ordering = ["-created_at"]
-
-    @property
-    def progress(self):
-        values = self.tasks.aggregate(total=models.Count("id"), done=models.Count("id", filter=models.Q(status=Task.Status.COMPLETED)))
-        return round(values["done"] * 100 / values["total"]) if values["total"] else 0
-
-
 class Task(TimeStampedModel):
     class Status(models.TextChoices):
         NOT_STARTED = "not_started", "Not Started"
@@ -111,7 +60,7 @@ class Task(TimeStampedModel):
         MEDIUM = "medium", "Medium"
         HIGH = "high", "High"
 
-    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="tasks")
+    department = models.ForeignKey(Department, on_delete=models.CASCADE, related_name="tasks")
     title = models.CharField(max_length=220)
     description = models.TextField(blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.NOT_STARTED)
@@ -206,7 +155,7 @@ class Report(TimeStampedModel):
     class Type(models.TextChoices):
         WEEKLY_PROGRESS = "weekly_progress", "Weekly Progress"
         TEAM_PERFORMANCE = "team_performance", "Team Performance"
-        PROJECT_STATUS = "project_status", "Project Status"
+        DEPARTMENT_STATUS = "department_status", "Department Status"
         TIME_TRACKING = "time_tracking", "Time Tracking"
         CUSTOM = "custom", "Custom"
 

@@ -1,8 +1,7 @@
 from django import forms
-from django.contrib.admin.widgets import FilteredSelectMultiple
 from django.utils.html import format_html, format_html_join
 
-from .models import Event, Membership, User
+from .models import Event
 
 
 class DatalistInput(forms.TextInput):
@@ -15,17 +14,8 @@ class DatalistInput(forms.TextInput):
         datalist_id = f"{attrs.get('id', f'id_{name}')}_options"
         attrs["list"] = datalist_id
         text_input = super().render(name, value, attrs, renderer)
-        options = format_html_join(
-            "",
-            '<option value="{}"></option>',
-            ((option,) for option in self.options),
-        )
-        return format_html(
-            '{}<datalist id="{}">{}</datalist>',
-            text_input,
-            datalist_id,
-            options,
-        )
+        options = format_html_join("", '<option value="{}"></option>', ((option,) for option in self.options))
+        return format_html('{}<datalist id="{}">{}</datalist>', text_input, datalist_id, options)
 
 
 class EventAdminForm(forms.ModelForm):
@@ -41,92 +31,3 @@ class EventAdminForm(forms.ModelForm):
     class Meta:
         model = Event
         fields = "__all__"
-
-
-class BulkMembershipAdminForm(forms.ModelForm):
-    ROLE_FIELDS = (
-        ("owners", Membership.Role.OWNER),
-        ("admins", Membership.Role.ADMIN),
-        ("managers", Membership.Role.MANAGER),
-        ("members", Membership.Role.MEMBER),
-    )
-
-    owners = forms.ModelMultipleChoiceField(
-        queryset=User.objects.all(),
-        required=False,
-        widget=FilteredSelectMultiple("owners", is_stacked=False),
-        help_text="Select all users who should be Owners.",
-    )
-    admins = forms.ModelMultipleChoiceField(
-        queryset=User.objects.all(),
-        required=False,
-        widget=FilteredSelectMultiple("admins", is_stacked=False),
-        help_text="Select all users who should be Admins.",
-    )
-    managers = forms.ModelMultipleChoiceField(
-        queryset=User.objects.all(),
-        required=False,
-        widget=FilteredSelectMultiple("managers", is_stacked=False),
-        help_text="Select all users who should be Managers.",
-    )
-    members = forms.ModelMultipleChoiceField(
-        queryset=User.objects.all(),
-        required=False,
-        widget=FilteredSelectMultiple("members", is_stacked=False),
-        help_text="Select all users who should be Members.",
-    )
-
-    class Meta:
-        model = Membership
-        fields = ("department", "is_active")
-
-    def clean(self):
-        cleaned_data = super().clean()
-        selected_roles = {}
-        for field_name, role in self.ROLE_FIELDS:
-            for user in cleaned_data.get(field_name) or ():
-                if user.pk in selected_roles:
-                    self.add_error(
-                        field_name,
-                        f"{user} is already selected as {selected_roles[user.pk]}. "
-                        "A user can have only one role in the organization.",
-                    )
-                else:
-                    selected_roles[user.pk] = Membership.Role(role).label
-
-        if not selected_roles:
-            raise forms.ValidationError("Select at least one user for one of the roles.")
-
-        return cleaned_data
-
-    def save(self, commit=True):
-        selections = [
-            (user, role)
-            for field_name, role in self.ROLE_FIELDS
-            for user in self.cleaned_data[field_name]
-        ]
-        first_user, first_role = selections[0]
-        existing_membership = Membership.objects.filter(
-            user=first_user,
-        ).first()
-        if existing_membership:
-            self.instance = existing_membership
-
-        self.instance.department = self.cleaned_data.get("department")
-        self.instance.is_active = self.cleaned_data["is_active"]
-        self.instance.user = first_user
-        self.instance.role = first_role
-        self._remaining_memberships = selections[1:]
-        return super().save(commit=commit)
-
-    def save_remaining_memberships(self):
-        for user, role in self._remaining_memberships:
-            Membership.objects.update_or_create(
-                user=user,
-                defaults={
-                    "department": self.instance.department,
-                    "role": role,
-                    "is_active": self.instance.is_active,
-                },
-            )
-        return len(self._remaining_memberships)

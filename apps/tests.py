@@ -4,7 +4,7 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from .models import Department, Event, Membership, Project, Task, User
+from .models import Department, Event, Task, User
 
 
 class DepartmentScopedApiTests(APITestCase):
@@ -16,18 +16,11 @@ class DepartmentScopedApiTests(APITestCase):
             username="member", email="member@example.com", password="pass12345"
         )
         self.department = Department.objects.create(name="Engineering", code="engineering")
-        Membership.objects.create(
-            department=self.department,
-            user=self.owner,
-            role=Membership.Role.OWNER,
-        )
-        Membership.objects.create(department=self.department, user=self.member)
-        self.project = Project.objects.create(
-            department=self.department,
-            name="Website",
-            created_by=self.owner,
-            status=Project.Status.IN_PROGRESS,
-        )
+        self.owner.department = self.department
+        self.owner.role = User.Role.OWNER
+        self.owner.save(update_fields=["department", "role"])
+        self.member.department = self.department
+        self.member.save(update_fields=["department"])
         self.client.force_authenticate(self.owner)
 
     def test_workspace_endpoint_is_removed(self):
@@ -41,25 +34,27 @@ class DepartmentScopedApiTests(APITestCase):
         self.assertEqual(item["code"], "engineering")
         self.assertNotIn("workspace", item)
 
-    def test_project_uses_department_without_workspace(self):
+    def test_project_endpoint_is_removed(self):
+        response = self.client.get("/api/v1/projects/")
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_task_uses_department_directly(self):
         response = self.client.post(
-            "/api/v1/projects/",
-            {"department": self.department.pk, "name": "Mobile app"},
+            "/api/v1/tasks/",
+            {"department": self.department.pk, "title": "Update website"},
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertNotIn("workspace", response.data)
+        self.assertNotIn("project", response.data)
 
     def test_member_can_only_be_created_for_department(self):
-        new_user = User.objects.create_user(
-            username="new", email="new@example.com", password="pass12345"
-        )
         response = self.client.post(
             "/api/v1/members/",
             {
                 "department": self.department.pk,
-                "user": new_user.pk,
-                "role": Membership.Role.MEMBER,
+                "username": "new",
+                "email": "new@example.com",
+                "role": User.Role.MEMBER,
             },
             format="json",
         )
@@ -68,7 +63,7 @@ class DepartmentScopedApiTests(APITestCase):
 
     def test_analytics_is_scoped_by_department(self):
         Task.objects.create(
-            project=self.project,
+            department=self.department,
             title="Done",
             created_by=self.owner,
             status=Task.Status.COMPLETED,

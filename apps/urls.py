@@ -2,12 +2,11 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
-from .views import AccountDeleteView, AnalyticsView, ConversationViewSet, DepartmentViewSet, EventViewSet, FAQViewSet, MembershipViewSet, MessageViewSet, PasswordChangeView, PasswordResetConfirmView, PasswordResetRequestView, PreferenceView, ProfileView, ProjectViewSet, ReportViewSet, SupportTicketViewSet, TaskViewSet, TimeEntryViewSet, TwoFactorView
+from .views import AccountDeleteView, AnalyticsView, ConversationViewSet, DepartmentViewSet, EventViewSet, FAQViewSet, MemberViewSet, MessageViewSet, PasswordChangeView, PasswordResetConfirmView, PasswordResetRequestView, PreferenceView, ProfileView, ReportViewSet, SupportTicketViewSet, TaskViewSet, TimeEntryViewSet, TwoFactorView
 
 router = DefaultRouter()
 router.register("departments", DepartmentViewSet, basename="department")
-router.register("members", MembershipViewSet, basename="member")
-router.register("projects", ProjectViewSet, basename="project")
+router.register("members", MemberViewSet, basename="member")
 router.register("tasks", TaskViewSet, basename="task")
 router.register("events", EventViewSet, basename="event")
 router.register("conversations", ConversationViewSet, basename="conversation")

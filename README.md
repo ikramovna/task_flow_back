@@ -1,6 +1,6 @@
 # TaskFlow Backend
 
-DRF backend for the Tasks, Projects, Analytics, Calendar and Team Members Figma screens.
+DRF backend for the Tasks, Departments, Analytics, Calendar and Team Members screens.
 
 ## Run locally
 
@@ -18,15 +18,13 @@ Demo login: `admin@taskflow.local` / `TaskFlow123!`
 
 ## Main API
 
-All list endpoints support pagination. Tasks, projects, members and events accept `?department=<uuid>`; search and ordering are available where appropriate.
+All list endpoints support pagination. Tasks, members and events accept `?department=<uuid>`; search and ordering are available where appropriate.
 
 | Screen | Endpoint |
 |---|---|
 | Login | `POST /api/v1/auth/token/` |
 | Departments | `/api/v1/departments/` |
 | Tasks | `/api/v1/tasks/` |
-| Projects | `/api/v1/projects/` |
-| Project cards | `GET /api/v1/projects/summary/?department=<uuid>` |
 | Team members | `/api/v1/members/` |
 | Team cards | `GET /api/v1/members/summary/?department=<uuid>` |
 | Calendar | `/api/v1/events/` |

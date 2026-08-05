@@ -2,17 +2,15 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from import_export.admin import ImportExportMixin, ImportExportModelAdmin
 
-from .forms import BulkMembershipAdminForm, EventAdminForm
-from .models import Conversation, ConversationParticipant, Department, Event, FAQ, Membership, Message, Project, Report, SupportTicket, Task, TimeEntry, User, UserPreference
+from .forms import EventAdminForm
+from .models import Conversation, ConversationParticipant, Department, Event, FAQ, Message, Report, SupportTicket, Task, TimeEntry, User, UserPreference
 from .resources import (
     ConversationParticipantResource,
     ConversationResource,
     DepartmentResource,
     EventResource,
     FAQResource,
-    MembershipResource,
     MessageResource,
-    ProjectResource,
     ReportResource,
     SupportTicketResource,
     TaskResource,
@@ -22,20 +20,15 @@ from .resources import (
 )
 
 
-class MembershipInline(admin.TabularInline):
-    model = Membership
-    extra = 0
-    autocomplete_fields = ("department", "user")
-
-
 @admin.register(User)
 class TaskFlowUserAdmin(ImportExportMixin, UserAdmin):
     resource_classes = (UserResource,)
-    fieldsets = UserAdmin.fieldsets + (("TaskFlow", {"fields": ("avatar", "phone", "job_title")}),)
-    add_fieldsets = UserAdmin.add_fieldsets + (("TaskFlow", {"fields": ("email", "first_name", "last_name")}),)
-    list_display = ("email", "username", "full_name", "job_title", "is_staff", "is_active")
-    list_filter = ("is_active", "is_staff", "is_superuser", "groups")
-    search_fields = ("email", "username", "first_name", "last_name", "phone", "job_title")
+    fieldsets = UserAdmin.fieldsets + (("TaskFlow", {"fields": ("department", "role", "avatar", "phone", "job_title")}),)
+    add_fieldsets = UserAdmin.add_fieldsets + (("TaskFlow", {"fields": ("email", "first_name", "last_name", "department", "role")}),)
+    list_display = ("email", "username", "full_name", "department", "role", "job_title", "is_staff", "is_active")
+    list_filter = ("role", "department", "is_active", "is_staff", "is_superuser", "groups")
+    search_fields = ("email", "username", "first_name", "last_name", "phone", "job_title", "department__name")
+    autocomplete_fields = ("department",)
     ordering = ("email",)
 
     @admin.display(description="Full name", ordering="first_name")
@@ -53,66 +46,16 @@ class DepartmentAdmin(ImportExportModelAdmin):
 
     @admin.display(description="Members")
     def member_count(self, obj):
-        return obj.memberships.filter(is_active=True).count()
-
-
-@admin.register(Membership)
-class MembershipAdmin(ImportExportModelAdmin):
-    resource_classes = (MembershipResource,)
-    list_display = ("user", "department", "role", "is_active", "joined_at")
-    list_filter = ("role", "is_active", "department")
-    search_fields = ("user__email", "user__first_name", "user__last_name", "department__name")
-    autocomplete_fields = ("department", "user")
-    readonly_fields = ("joined_at", "created_at", "updated_at")
-
-    def get_form(self, request, obj=None, **kwargs):
-        if obj is None:
-            kwargs["form"] = BulkMembershipAdminForm
-        return super().get_form(request, obj, **kwargs)
-
-    def get_fieldsets(self, request, obj=None):
-        if obj is None:
-            return (
-                (
-                    None,
-                    {
-                        "fields": (
-                            "department",
-                            "owners",
-                            "admins",
-                            "managers",
-                            "members",
-                            "is_active",
-                        )
-                    },
-                ),
-            )
-        return super().get_fieldsets(request, obj)
-
-    def save_related(self, request, form, formsets, change):
-        super().save_related(request, form, formsets, change)
-        if not change and isinstance(form, BulkMembershipAdminForm):
-            form.save_remaining_memberships()
-
-
-@admin.register(Project)
-class ProjectAdmin(ImportExportModelAdmin):
-    resource_classes = (ProjectResource,)
-    list_display = ("name", "department", "status", "priority", "progress", "due_date", "created_by")
-    list_filter = ("status", "priority", "department", "due_date")
-    search_fields = ("name", "description", "department__name", "created_by__email")
-    autocomplete_fields = ("department", "members", "created_by")
-    readonly_fields = ("created_at", "updated_at", "progress")
-    date_hierarchy = "created_at"
+        return obj.users.filter(is_active=True).count()
 
 
 @admin.register(Task)
 class TaskAdmin(ImportExportModelAdmin):
     resource_classes = (TaskResource,)
-    list_display = ("title", "project", "status", "priority", "progress", "due_date", "created_by")
-    list_filter = ("status", "priority", "project__department", "project", "due_date")
-    search_fields = ("title", "description", "category", "project__name", "assignees__email")
-    autocomplete_fields = ("project", "assignees", "created_by")
+    list_display = ("title", "department", "status", "priority", "progress", "due_date", "created_by")
+    list_filter = ("status", "priority", "department", "due_date")
+    search_fields = ("title", "description", "category", "department__name", "assignees__email")
+    autocomplete_fields = ("department", "assignees", "created_by")
     readonly_fields = ("created_at", "updated_at", "completed_at")
     date_hierarchy = "due_date"
 

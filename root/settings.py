@@ -184,7 +184,7 @@ SIMPLE_JWT = {
 
 SPECTACULAR_SETTINGS = {
     'TITLE': 'TaskFlow API',
-    'DESCRIPTION': 'TaskFlow project, task, team, calendar and analytics API.',
+    'DESCRIPTION': 'TaskFlow task, department, team, calendar and analytics API.',
     'VERSION': '1.0.0',
     'SERVE_INCLUDE_SCHEMA': False,
 }
@@ -195,11 +195,10 @@ JAZZMIN_SETTINGS = {
     "site_brand": "TaskFlow",
     "welcome_sign": "Welcome to TaskFlow Administration",
     "copyright": "TaskFlow",
-    "search_model": ["apps.User", "apps.Project", "apps.Task"],
+    "search_model": ["apps.User", "apps.Department", "apps.Task"],
     "user_avatar": "avatar",
     "topmenu_links": [
         {"name": "Home", "url": "admin:index", "permissions": ["apps.view_user"]},
-        {"model": "apps.Project"},
         {"model": "apps.Task"},
     ],
     "icons": {
@@ -207,8 +206,6 @@ JAZZMIN_SETTINGS = {
         "auth.Group": "fas fa-user-shield",
         "apps.User": "fas fa-user",
         "apps.Department": "fas fa-sitemap",
-        "apps.Membership": "fas fa-users",
-        "apps.Project": "fas fa-folder-open",
         "apps.Task": "fas fa-list-check",
         "apps.Event": "fas fa-calendar-days",
         "apps.UserPreference": "fas fa-sliders",
@@ -223,11 +220,9 @@ JAZZMIN_SETTINGS = {
     "order_with_respect_to": [
         "apps",
         "apps.Department",
-        "apps.Project",
         "apps.Task",
         "apps.Event",
         "apps.User",
-        "apps.Membership",
         "apps.TimeEntry",
         "apps.Report",
         "apps.SupportTicket",

@@ -11,7 +11,6 @@ class TaskFlowAutoSchema(AutoSchema):
         "me": "Auth",
         "departments": "Departments",
         "members": "Members",
-        "projects": "Projects",
         "tasks": "Tasks",
         "events": "Events",
         "conversations": "Conversations",
