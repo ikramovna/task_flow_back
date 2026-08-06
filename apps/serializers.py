@@ -68,19 +68,16 @@ class MemberSerializer(serializers.ModelSerializer):
             instance.save(update_fields=["password"])
         return instance
 
-    def _task_counts(self, obj):
-        qs = obj.assigned_tasks.filter(department=obj.department)
-        return qs.count(), qs.filter(status=Task.Status.COMPLETED).count(), qs.filter(status=Task.Status.IN_PROGRESS).count()
-
     def get_efficiency(self, obj) -> int:
-        total, done, _ = self._task_counts(obj)
+        total = getattr(obj, "task_count", 0)
+        done = getattr(obj, "completed_task_count", 0)
         return round(done * 100 / total) if total else 0
 
     def get_completed_tasks(self, obj) -> int:
-        return self._task_counts(obj)[1]
+        return getattr(obj, "completed_task_count", 0)
 
     def get_in_progress_tasks(self, obj) -> int:
-        return self._task_counts(obj)[2]
+        return getattr(obj, "in_progress_task_count", 0)
 
 
 class TaskSerializer(serializers.ModelSerializer):
@@ -234,16 +231,22 @@ class ConversationSerializer(serializers.ModelSerializer):
         fields = ("id", "department", "title", "is_group", "participants", "participant_details", "last_message", "unread_count", "created_at", "updated_at")
 
     def get_last_message(self, obj) -> dict | None:
-        message = obj.messages.filter(is_deleted=False).last()
+        messages = getattr(obj, "visible_messages", None)
+        message = messages[-1] if messages else None
         return MessageSerializer(message, context=self.context).data if message else None
 
     def get_unread_count(self, obj) -> int:
         request = self.context.get("request")
         if not request or not request.user.is_authenticated:
             return 0
-        link = obj.participant_links.filter(user=request.user).first()
-        qs = obj.messages.exclude(sender=request.user).filter(is_deleted=False)
-        return qs.filter(created_at__gt=link.last_read_at).count() if link and link.last_read_at else qs.count()
+        links = getattr(obj, "current_user_links", [])
+        link = links[0] if links else None
+        messages = getattr(obj, "visible_messages", [])
+        return sum(
+            message.sender_id != request.user.id
+            and (not link or not link.last_read_at or message.created_at > link.last_read_at)
+            for message in messages
+        )
 
     def validate(self, attrs):
         department = attrs.get("department") or self.instance.department

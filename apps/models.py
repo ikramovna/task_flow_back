@@ -85,6 +85,10 @@ class Task(TimeStampedModel):
 
     class Meta:
         ordering = ["due_date", "-created_at"]
+        indexes = [
+            models.Index(fields=("department", "is_archived", "status"), name="task_dept_arch_status_idx"),
+            models.Index(fields=("department", "is_archived", "due_date"), name="task_dept_arch_due_idx"),
+        ]
 
 
 class Event(TimeStampedModel):
@@ -107,6 +111,9 @@ class Event(TimeStampedModel):
 
     class Meta:
         ordering = ["starts_at"]
+        indexes = [
+            models.Index(fields=("department", "starts_at"), name="event_dept_starts_idx"),
+        ]
 
 
 class UserPreference(TimeStampedModel):
@@ -160,6 +167,9 @@ class Message(TimeStampedModel):
 
     class Meta:
         ordering = ["created_at"]
+        indexes = [
+            models.Index(fields=("conversation", "is_deleted", "created_at"), name="msg_conv_del_created_idx"),
+        ]
 
 
 class Notification(TimeStampedModel):

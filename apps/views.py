@@ -8,7 +8,7 @@ from django.conf import settings
 from django.contrib.auth.tokens import default_token_generator
 from django.http import FileResponse
 from django.db import transaction
-from django.db.models import Count, Q
+from django.db.models import Count, F, Prefetch, Q
 from django.db.models.functions import TruncMonth
 from django.utils import timezone
 from django.utils.encoding import force_bytes
@@ -122,7 +122,29 @@ class MemberViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return self.queryset
-        qs = User.objects.select_related("department")
+        qs = User.objects.select_related("department").annotate(
+            task_count=Count(
+                "assigned_tasks",
+                filter=Q(assigned_tasks__department_id=F("department_id")),
+                distinct=True,
+            ),
+            completed_task_count=Count(
+                "assigned_tasks",
+                filter=Q(
+                    assigned_tasks__department_id=F("department_id"),
+                    assigned_tasks__status=Task.Status.COMPLETED,
+                ),
+                distinct=True,
+            ),
+            in_progress_task_count=Count(
+                "assigned_tasks",
+                filter=Q(
+                    assigned_tasks__department_id=F("department_id"),
+                    assigned_tasks__status=Task.Status.IN_PROGRESS,
+                ),
+                distinct=True,
+            ),
+        )
         if not self.request.user.is_superuser:
             qs = qs if self.request.user.role in self.manager_roles else qs.filter(department=self.request.user.department)
         return qs.filter(department_id=self.department_id()) if self.department_id() else qs
@@ -389,13 +411,25 @@ class DashboardView(APIView):
         day_start = timezone.make_aware(datetime.combine(today, time.min))
         day_end = day_start + timedelta(days=1)
 
-        total = tasks.count()
-        completed = tasks.filter(status=Task.Status.COMPLETED).count()
-        in_progress = tasks.filter(status=Task.Status.IN_PROGRESS).count()
-        not_started = tasks.filter(status=Task.Status.NOT_STARTED).count()
-        backlog = tasks.filter(status=Task.Status.BACKLOG).count()
-        on_hold = tasks.filter(status=Task.Status.ON_HOLD).count()
-        overdue = tasks.exclude(status=Task.Status.COMPLETED).filter(due_date__lt=today).count()
+        summary = tasks.aggregate(
+            total=Count("id"),
+            completed=Count("id", filter=Q(status=Task.Status.COMPLETED)),
+            in_progress=Count("id", filter=Q(status=Task.Status.IN_PROGRESS)),
+            not_started=Count("id", filter=Q(status=Task.Status.NOT_STARTED)),
+            backlog=Count("id", filter=Q(status=Task.Status.BACKLOG)),
+            on_hold=Count("id", filter=Q(status=Task.Status.ON_HOLD)),
+            overdue=Count(
+                "id",
+                filter=Q(due_date__lt=today) & ~Q(status=Task.Status.COMPLETED),
+            ),
+        )
+        total = summary["total"]
+        completed = summary["completed"]
+        in_progress = summary["in_progress"]
+        not_started = summary["not_started"]
+        backlog = summary["backlog"]
+        on_hold = summary["on_hold"]
+        overdue = summary["overdue"]
 
         def percent(value):
             return round(value * 100 / total, 1) if total else 0.0
@@ -543,7 +577,19 @@ class ConversationViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return self.queryset
-        qs = Conversation.objects.filter(participants=self.request.user).select_related("department").prefetch_related("participants", "messages__sender", "participant_links").distinct()
+        qs = Conversation.objects.filter(participants=self.request.user).select_related("department").prefetch_related(
+            "participants",
+            Prefetch(
+                "messages",
+                queryset=Message.objects.filter(is_deleted=False).select_related("sender"),
+                to_attr="visible_messages",
+            ),
+            Prefetch(
+                "participant_links",
+                queryset=ConversationParticipant.objects.filter(user=self.request.user),
+                to_attr="current_user_links",
+            ),
+        ).distinct()
         return qs.filter(department_id=self.department_id()) if self.department_id() else qs
 
     @transaction.atomic
