@@ -28,6 +28,7 @@ from .notifications import notify_new_message, notify_task_assigned, notify_task
 from .pagination import StandardPagination
 from .permissions import IsDepartmentMember
 from .serializers import AccountDeleteSerializer, ConversationSerializer, DepartmentSerializer, EventSerializer, MemberSerializer, MessageSerializer, NotificationSerializer, PasswordChangeSerializer, PasswordResetConfirmSerializer, PasswordResetRequestSerializer, ProfileSerializer, ReportSerializer, TaskSerializer, TwoFactorSerializer, UserBriefSerializer, UserPreferenceSerializer
+from .task_visibility import PRIVILEGED_TASK_ROLES, visible_tasks_for
 
 
 class PasswordResetRequestView(generics.GenericAPIView):
@@ -122,10 +123,13 @@ class MemberViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return self.queryset
+        task_visibility = Q()
+        if not self.request.user.is_superuser and self.request.user.role not in PRIVILEGED_TASK_ROLES:
+            task_visibility = Q(assigned_tasks__is_hidden=False) | Q(assigned_tasks__assignees=self.request.user)
         qs = User.objects.select_related("department").annotate(
             task_count=Count(
                 "assigned_tasks",
-                filter=Q(assigned_tasks__department_id=F("department_id")),
+                filter=Q(assigned_tasks__department_id=F("department_id")) & task_visibility,
                 distinct=True,
             ),
             completed_task_count=Count(
@@ -133,7 +137,7 @@ class MemberViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
                 filter=Q(
                     assigned_tasks__department_id=F("department_id"),
                     assigned_tasks__status=Task.Status.COMPLETED,
-                ),
+                ) & task_visibility,
                 distinct=True,
             ),
             in_progress_task_count=Count(
@@ -141,7 +145,7 @@ class MemberViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
                 filter=Q(
                     assigned_tasks__department_id=F("department_id"),
                     assigned_tasks__status=Task.Status.IN_PROGRESS,
-                ),
+                ) & task_visibility,
                 distinct=True,
             ),
         )
@@ -171,7 +175,7 @@ class MemberViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
     @action(detail=False, methods=["get"])
     def summary(self, request):
         qs = self.filter_queryset(self.get_queryset())
-        tasks = Task.objects.filter(assignees__in=qs).distinct()
+        tasks = visible_tasks_for(Task.objects.filter(assignees__in=qs), request.user).distinct()
         total = qs.count()
         completed = tasks.filter(status=Task.Status.COMPLETED).count()
         efficiency = round(completed * 100 / tasks.count()) if tasks.exists() else 0
@@ -227,10 +231,11 @@ class TaskViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
         if user.role in (User.Role.OWNER, User.Role.ADMIN):
             qs = Task.objects.all()
         elif user.role == User.Role.MANAGER:
-            qs = Task.objects.filter(Q(assignees=user) | Q(created_by=user))
+            qs = Task.objects.filter(Q(assignees=user) | Q(created_by=user) | Q(is_hidden=True))
         else:
             qs = Task.objects.filter(department=user.department, assignees=user)
-        qs = qs.select_related("department", "created_by").prefetch_related("assignees").distinct()
+        qs = visible_tasks_for(qs, user)
+        qs = qs.select_related("department", "created_by", "main_assignee").prefetch_related("assignees").distinct()
         archived = self.request.query_params.get("archived", "").lower()
         if self.action == "unarchive":
             qs = qs.filter(is_archived=True)
@@ -271,12 +276,16 @@ class TaskViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
         is_manager = user.role in (User.Role.OWNER, User.Role.ADMIN, User.Role.MANAGER)
         changed_fields = set(serializer.validated_data)
         member_fields = {"status", "progress"}
+        if changed_fields & member_fields and task.main_assignee_id != user.pk:
+            raise PermissionDenied(
+                "Only the main assignee can update task status and progress."
+            )
         if not is_manager:
             if not task.assignees.filter(pk=self.request.user.pk).exists():
                 raise PermissionDenied("You can update only tasks assigned to you.")
             if not changed_fields.issubset(member_fields):
                 raise PermissionDenied(
-                    "Members can update only status and progress."
+                    "The main assignee can update only status and progress."
                 )
 
         previous = serializer.instance.status
@@ -364,7 +373,7 @@ class AnalyticsView(APIView):
             return Response({"department": "This query parameter is required."}, status=status.HTTP_400_BAD_REQUEST)
         if request.user.role not in (User.Role.OWNER, User.Role.ADMIN, User.Role.MANAGER) and str(request.user.department_id) != department_id:
             return Response({"detail": "You are not a member of this department."}, status=status.HTTP_403_FORBIDDEN)
-        tasks = Task.objects.filter(department_id=department_id)
+        tasks = visible_tasks_for(Task.objects.filter(department_id=department_id), request.user)
         total = tasks.count()
         completed = tasks.filter(status=Task.Status.COMPLETED)
         completion_rate = round(completed.count() * 100 / total, 1) if total else 0
@@ -397,14 +406,14 @@ class DashboardView(APIView):
         events = Event.objects.select_related("department", "created_by").prefetch_related("attendees")
 
         if user.role == User.Role.MANAGER:
-            tasks = tasks.filter(Q(assignees=user) | Q(created_by=user))
+            tasks = tasks.filter(Q(assignees=user) | Q(created_by=user) | Q(is_hidden=True))
         elif user.role not in (User.Role.OWNER, User.Role.ADMIN):
             tasks = tasks.filter(department=user.department)
             events = events.filter(department=user.department)
             tasks = tasks.filter(assignees=user)
             events = events.filter(attendees=user)
 
-        tasks = tasks.distinct()
+        tasks = visible_tasks_for(tasks, user).distinct()
         events = events.distinct()
         today = timezone.localdate()
         now = timezone.now()
@@ -694,7 +703,7 @@ class ReportViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
         department = serializer.validated_data["department"]
         self.ensure_member(department)
         report = serializer.save(generated_by=self.request.user)
-        tasks = Task.objects.filter(department=department)
+        tasks = visible_tasks_for(Task.objects.filter(department=department), self.request.user)
         result = {"tasks": tasks.count(), "completed": tasks.filter(status=Task.Status.COMPLETED).count(), "in_progress": tasks.filter(status=Task.Status.IN_PROGRESS).count(), "members": department.users.filter(is_active=True).count()}
         buffer = io.StringIO()
         writer = csv.writer(buffer)

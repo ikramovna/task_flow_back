@@ -69,9 +69,17 @@ class Task(TimeStampedModel):
     priority = models.CharField(max_length=10, choices=Priority.choices, default=Priority.MEDIUM)
     category = models.CharField(max_length=80, blank=True)
     assignees = models.ManyToManyField(User, blank=True, related_name="assigned_tasks")
+    main_assignee = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        related_name="main_tasks",
+        null=True,
+        blank=True,
+    )
     created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name="created_tasks")
     due_date = models.DateField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
+    is_hidden = models.BooleanField(default=False)
     is_archived = models.BooleanField(default=False)
     archived_at = models.DateTimeField(null=True, blank=True)
     archived_by = models.ForeignKey(

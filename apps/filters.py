@@ -9,7 +9,7 @@ class TaskFilter(django_filters.FilterSet):
 
     class Meta:
         model = Task
-        fields = ("department", "status", "priority", "category", "assignees")
+        fields = ("department", "status", "priority", "category", "assignees", "is_hidden")
 
 
 class EventFilter(django_filters.FilterSet):

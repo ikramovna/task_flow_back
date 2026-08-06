@@ -49,11 +49,11 @@ class DepartmentAdmin(ImportExportModelAdmin):
 @admin.register(Task)
 class TaskAdmin(ImportExportModelAdmin):
     resource_classes = (TaskResource,)
-    list_display = ("title", "department", "status", "priority", "progress", "due_date", "created_by")
-    list_filter = ("status", "priority", "department", "due_date")
+    list_display = ("title", "department", "main_assignee", "status", "priority", "is_hidden", "progress", "due_date", "created_by")
+    list_filter = ("is_hidden", "status", "priority", "department", "due_date")
     search_fields = ("title", "description", "category", "department__name", "assignees__email")
     autocomplete_fields = ("department", "assignees", "created_by")
-    readonly_fields = ("created_at", "updated_at", "completed_at")
+    readonly_fields = ("main_assignee", "created_at", "updated_at", "completed_at")
     date_hierarchy = "due_date"
 
 

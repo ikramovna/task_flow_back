@@ -1608,6 +1608,10 @@ paths:
         schema:
           type: string
           format: date
+      - in: query
+        name: is_hidden
+        schema:
+          type: boolean
       - name: ordering
         required: false
         in: query
@@ -2792,6 +2796,14 @@ components:
           items:
             $ref: '#/components/schemas/UserBrief'
           readOnly: true
+        main_assignee:
+          type: integer
+          readOnly: true
+          nullable: true
+        main_assignee_detail:
+          allOf:
+          - $ref: '#/components/schemas/UserBrief'
+          readOnly: true
         created_by:
           type: integer
           readOnly: true
@@ -2804,6 +2816,8 @@ components:
           format: date-time
           readOnly: true
           nullable: true
+        is_hidden:
+          type: boolean
         is_archived:
           type: boolean
           readOnly: true
@@ -3059,6 +3073,14 @@ components:
           items:
             $ref: '#/components/schemas/UserBrief'
           readOnly: true
+        main_assignee:
+          type: integer
+          readOnly: true
+          nullable: true
+        main_assignee_detail:
+          allOf:
+          - $ref: '#/components/schemas/UserBrief'
+          readOnly: true
         created_by:
           type: integer
           readOnly: true
@@ -3071,6 +3093,8 @@ components:
           format: date-time
           readOnly: true
           nullable: true
+        is_hidden:
+          type: boolean
         is_archived:
           type: boolean
           readOnly: true
@@ -3105,6 +3129,8 @@ components:
       - department
       - id
       - is_archived
+      - main_assignee
+      - main_assignee_detail
       - title
       - updated_at
     TaskStatusEnum:

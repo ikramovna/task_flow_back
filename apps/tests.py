@@ -60,6 +60,117 @@ class DepartmentScopedApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertNotIn("project", response.data)
 
+    def test_first_assignee_is_main_and_only_main_can_change_status(self):
+        second = User.objects.create_user(
+            username="second-assignee",
+            email="second-assignee@example.com",
+            password="pass12345",
+            department=self.department,
+        )
+        response = self.client.post(
+            "/api/v1/tasks/",
+            {
+                "department": self.department.pk,
+                "title": "Ordered assignees",
+                "assignees": [self.member.pk, second.pk],
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(str(response.data["main_assignee"]), str(self.member.pk))
+        task_id = response.data["id"]
+
+        self.client.force_authenticate(second)
+        response = self.client.patch(
+            f"/api/v1/tasks/{task_id}/",
+            {"status": Task.Status.IN_PROGRESS},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+        self.client.force_authenticate(self.owner)
+        response = self.client.patch(
+            f"/api/v1/tasks/{task_id}/",
+            {"status": Task.Status.IN_PROGRESS},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+        self.client.force_authenticate(self.member)
+        response = self.client.patch(
+            f"/api/v1/tasks/{task_id}/",
+            {"status": Task.Status.IN_PROGRESS, "progress": 25},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["status"], Task.Status.IN_PROGRESS)
+        self.assertEqual(response.data["progress"], 25)
+
+    def test_hidden_task_is_visible_only_to_privileged_roles_and_assignees(self):
+        assignee = self.member
+        unassigned = User.objects.create_user(
+            username="unassigned",
+            email="unassigned@example.com",
+            password="pass12345",
+            department=self.department,
+        )
+        response = self.client.post(
+            "/api/v1/tasks/",
+            {
+                "department": self.department.pk,
+                "title": "Private launch",
+                "is_hidden": True,
+                "assignees": [assignee.pk],
+            },
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(response.data["is_hidden"])
+        task_id = response.data["id"]
+
+        self.client.force_authenticate(assignee)
+        self.assertEqual(self.client.get(f"/api/v1/tasks/{task_id}/").status_code, status.HTTP_200_OK)
+
+        self.client.force_authenticate(unassigned)
+        self.assertEqual(self.client.get(f"/api/v1/tasks/{task_id}/").status_code, status.HTTP_404_NOT_FOUND)
+
+        for role in (User.Role.OWNER, User.Role.ADMIN, User.Role.MANAGER):
+            privileged = self.owner if role == User.Role.OWNER else User.objects.create_user(
+                username=f"hidden-{role}",
+                email=f"hidden-{role}@example.com",
+                password="pass12345",
+                department=self.department,
+                role=role,
+            )
+            with self.subTest(role=role):
+                self.client.force_authenticate(privileged)
+                self.assertEqual(
+                    self.client.get(f"/api/v1/tasks/{task_id}/").status_code,
+                    status.HTTP_200_OK,
+                )
+
+    def test_hidden_task_is_excluded_from_member_analytics_and_dashboard(self):
+        hidden = Task.objects.create(
+            department=self.department,
+            title="Confidential plan",
+            created_by=self.owner,
+            is_hidden=True,
+        )
+        visible = Task.objects.create(
+            department=self.department,
+            title="Public plan",
+            created_by=self.owner,
+        )
+        visible.assignees.add(self.member)
+        self.client.force_authenticate(self.member)
+
+        analytics = self.client.get("/api/v1/analytics/", {"department": self.department.pk})
+        dashboard = self.client.get("/api/v1/dashboard/")
+
+        self.assertEqual(analytics.data["monthly_progress"][0]["created"], 1)
+        self.assertEqual(dashboard.data["summary"]["total_tasks"]["count"], 1)
+        self.assertNotIn(str(hidden.pk), {item["id"] for item in dashboard.data["recent_tasks"]})
+
     def test_privileged_roles_can_assign_task_across_departments(self):
         other_department = Department.objects.create(name="Operations", code="operations-tasks")
         outsider = User.objects.create_user(
@@ -379,7 +490,12 @@ class NotificationApiTests(APITestCase):
         self.assertFalse(Notification.objects.filter(recipient=self.other).exists())
 
     def test_completed_task_notifies_creator(self):
-        task = Task.objects.create(department=self.department, title="Finish docs", created_by=self.owner)
+        task = Task.objects.create(
+            department=self.department,
+            title="Finish docs",
+            created_by=self.owner,
+            main_assignee=self.member,
+        )
         task.assignees.add(self.member)
         self.client.force_authenticate(self.member)
         response = self.client.patch(

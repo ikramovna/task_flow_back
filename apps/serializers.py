@@ -82,11 +82,12 @@ class MemberSerializer(serializers.ModelSerializer):
 
 class TaskSerializer(serializers.ModelSerializer):
     assignee_details = UserBriefSerializer(source="assignees", many=True, read_only=True)
+    main_assignee_detail = UserBriefSerializer(source="main_assignee", read_only=True)
 
     class Meta:
         model = Task
-        fields = ("id", "department", "title", "description", "status", "priority", "category", "assignees", "assignee_details", "created_by", "due_date", "completed_at", "is_archived", "archived_at", "archived_by", "progress", "created_at", "updated_at")
-        read_only_fields = ("created_by", "completed_at", "is_archived", "archived_at", "archived_by")
+        fields = ("id", "department", "title", "description", "status", "priority", "category", "assignees", "assignee_details", "main_assignee", "main_assignee_detail", "created_by", "due_date", "completed_at", "is_hidden", "is_archived", "archived_at", "archived_by", "progress", "created_at", "updated_at")
+        read_only_fields = ("main_assignee", "created_by", "completed_at", "is_archived", "archived_at", "archived_by")
 
     def validate(self, attrs):
         department = attrs.get("department") or self.instance.department
@@ -103,6 +104,24 @@ class TaskSerializer(serializers.ModelSerializer):
             if not can_assign_across_departments and user.department_id != department.id:
                 raise serializers.ValidationError({"assignees": "Every assignee must belong to the task department."})
         return attrs
+
+    def create(self, validated_data):
+        assignees = validated_data.pop("assignees", [])
+        task = Task.objects.create(
+            **validated_data,
+            main_assignee=assignees[0] if assignees else None,
+        )
+        task.assignees.set(assignees)
+        return task
+
+    def update(self, instance, validated_data):
+        assignees = validated_data.pop("assignees", None)
+        instance = super().update(instance, validated_data)
+        if assignees is not None:
+            instance.assignees.set(assignees)
+            instance.main_assignee = assignees[0] if assignees else None
+            instance.save(update_fields=("main_assignee", "updated_at"))
+        return instance
 
 
 class EventSerializer(serializers.ModelSerializer):
