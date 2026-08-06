@@ -3,7 +3,7 @@ from django.contrib.auth.admin import UserAdmin
 from import_export.admin import ImportExportMixin, ImportExportModelAdmin
 
 from .forms import EventAdminForm
-from .models import Conversation, ConversationParticipant, Department, Event, Message, Report, Task, User, UserPreference
+from .models import Conversation, ConversationParticipant, Department, Event, Message, Notification, Report, Task, User, UserPreference
 from .resources import (
     ConversationParticipantResource,
     ConversationResource,
@@ -55,6 +55,15 @@ class TaskAdmin(ImportExportModelAdmin):
     autocomplete_fields = ("department", "assignees", "created_by")
     readonly_fields = ("created_at", "updated_at", "completed_at")
     date_hierarchy = "due_date"
+
+
+@admin.register(Notification)
+class NotificationAdmin(admin.ModelAdmin):
+    list_display = ("recipient", "notification_type", "title", "read_at", "created_at")
+    list_filter = ("notification_type", "read_at", "created_at")
+    search_fields = ("recipient__email", "title", "body")
+    autocomplete_fields = ("recipient", "actor", "task", "message")
+    readonly_fields = ("created_at", "updated_at")
 
 
 @admin.register(Event)

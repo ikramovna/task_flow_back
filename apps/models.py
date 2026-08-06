@@ -162,6 +162,38 @@ class Message(TimeStampedModel):
         ordering = ["created_at"]
 
 
+class Notification(TimeStampedModel):
+    class Type(models.TextChoices):
+        TASK_ASSIGNED = "task_assigned", "Task Assigned"
+        DEADLINE_REMINDER = "deadline_reminder", "Deadline Reminder"
+        TASK_OVERDUE = "task_overdue", "Task Overdue"
+        TASK_COMPLETED = "task_completed", "Task Completed"
+        NEW_MESSAGE = "new_message", "New Message"
+
+    recipient = models.ForeignKey(User, on_delete=models.CASCADE, related_name="notifications")
+    actor = models.ForeignKey(
+        User, on_delete=models.SET_NULL, related_name="triggered_notifications", null=True, blank=True
+    )
+    notification_type = models.CharField(max_length=24, choices=Type.choices)
+    title = models.CharField(max_length=180)
+    body = models.TextField(blank=True)
+    task = models.ForeignKey(Task, on_delete=models.CASCADE, related_name="notifications", null=True, blank=True)
+    message = models.ForeignKey(Message, on_delete=models.CASCADE, related_name="notifications", null=True, blank=True)
+    read_at = models.DateTimeField(null=True, blank=True)
+    event_key = models.CharField(max_length=120, null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=("recipient", "event_key"),
+                condition=models.Q(event_key__isnull=False),
+                name="unique_notification_event_per_recipient",
+            )
+        ]
+        indexes = [models.Index(fields=("recipient", "read_at", "created_at"))]
+
+
 class Report(TimeStampedModel):
     class Type(models.TextChoices):
         WEEKLY_PROGRESS = "weekly_progress", "Weekly Progress"

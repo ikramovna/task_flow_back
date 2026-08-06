@@ -33,6 +33,7 @@ All list endpoints support pagination. Tasks, members and events accept `?depart
 | Reports | `/api/v1/reports/` and `/api/v1/reports/<id>/download/` |
 | Conversations | `/api/v1/conversations/` |
 | Messages | `/api/v1/messages/?conversation=<uuid>` |
+| Notifications | `/api/v1/notifications/` |
 | Profile | `GET/PATCH /api/v1/me/` |
 | Notifications/appearance | `GET/PATCH /api/v1/me/preferences/` |
 | Password | `POST /api/v1/me/change-password/` |
@@ -40,3 +41,9 @@ All list endpoints support pagination. Tasks, members and events accept `?depart
 | Delete account | `POST /api/v1/me/delete-account/` |
 
 Statuses use API-safe values: `not_started`, `in_progress`, `completed`, `at_risk`, `archived`. Priorities are `low`, `medium`, `high`.
+
+## Notifications
+
+Use `GET /api/v1/notifications/?unread=true` for unread items, `GET /api/v1/notifications/unread_count/` for the bell counter, `POST /api/v1/notifications/<id>/mark_read/`, and `POST /api/v1/notifications/mark_all_read/`.
+
+Run `python manage.py generate_notifications` daily (cron or Task Scheduler) to create deadline reminders and overdue notifications. The command is idempotent and respects each user's notification preferences.

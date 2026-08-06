@@ -3,7 +3,7 @@ from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
 from rest_framework import serializers
 
-from .models import Conversation, ConversationParticipant, Department, Event, Message, Report, Task, User, UserPreference
+from .models import Conversation, ConversationParticipant, Department, Event, Message, Notification, Report, Task, User, UserPreference
 
 
 class UserBriefSerializer(serializers.ModelSerializer):
@@ -209,6 +209,19 @@ class MessageSerializer(serializers.ModelSerializer):
         if not attrs.get("body") and not attrs.get("attachment"):
             raise serializers.ValidationError("A message body or attachment is required.")
         return attrs
+
+
+class NotificationSerializer(serializers.ModelSerializer):
+    actor_detail = UserBriefSerializer(source="actor", read_only=True)
+    is_read = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Notification
+        fields = ("id", "notification_type", "title", "body", "actor_detail", "task", "message", "is_read", "read_at", "created_at")
+        read_only_fields = fields
+
+    def get_is_read(self, obj) -> bool:
+        return obj.read_at is not None
 
 
 class ConversationSerializer(serializers.ModelSerializer):

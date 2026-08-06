@@ -1216,6 +1216,149 @@ paths:
       responses:
         '204':
           description: No response body
+  /api/v1/notifications/:
+    get:
+      operationId: api_v1_notifications_list
+      parameters:
+      - in: query
+        name: notification_type
+        schema:
+          type: string
+          enum:
+          - deadline_reminder
+          - new_message
+          - task_assigned
+          - task_completed
+          - task_overdue
+        description: |-
+          * `task_assigned` - Task Assigned
+          * `deadline_reminder` - Deadline Reminder
+          * `task_overdue` - Task Overdue
+          * `task_completed` - Task Completed
+          * `new_message` - New Message
+      - name: ordering
+        required: false
+        in: query
+        description: Which field to use when ordering the results.
+        schema:
+          type: string
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: page_size
+        required: false
+        in: query
+        description: Number of results to return per page.
+        schema:
+          type: integer
+      tags:
+      - Notifications
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedNotificationList'
+          description: ''
+  /api/v1/notifications/{id}/:
+    get:
+      operationId: api_v1_notifications_retrieve
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this notification.
+        required: true
+      tags:
+      - Notifications
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Notification'
+          description: ''
+  /api/v1/notifications/{id}/mark_read/:
+    post:
+      operationId: api_v1_notifications_mark_read_create
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this notification.
+        required: true
+      tags:
+      - Notifications
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Notification'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Notification'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Notification'
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Notification'
+          description: ''
+  /api/v1/notifications/mark_all_read/:
+    post:
+      operationId: api_v1_notifications_mark_all_read_create
+      tags:
+      - Notifications
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Notification'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Notification'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Notification'
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Notification'
+          description: ''
+  /api/v1/notifications/unread_count/:
+    get:
+      operationId: api_v1_notifications_unread_count_retrieve
+      tags:
+      - Notifications
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Notification'
+          description: ''
   /api/v1/reports/:
     get:
       operationId: api_v1_reports_list
@@ -1506,12 +1649,16 @@ paths:
         schema:
           type: string
           enum:
+          - backlog
           - completed
           - in_progress
           - not_started
+          - on_hold
         description: |-
+          * `backlog` - Backlog
           * `not_started` - Not Started
           * `in_progress` - In Progress
+          * `on_hold` - On Hold
           * `completed` - Completed
       tags:
       - Tasks
@@ -1653,6 +1800,74 @@ paths:
       responses:
         '204':
           description: No response body
+  /api/v1/tasks/{id}/archive/:
+    post:
+      operationId: api_v1_tasks_archive_create
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this task.
+        required: true
+      tags:
+      - Tasks
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Task'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Task'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Task'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+          description: ''
+  /api/v1/tasks/{id}/unarchive/:
+    post:
+      operationId: api_v1_tasks_unarchive_create
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this task.
+        required: true
+      tags:
+      - Tasks
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Task'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Task'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Task'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+          description: ''
 components:
   schemas:
     AccountDelete:
@@ -1961,6 +2176,74 @@ components:
       - is_deleted
       - sender
       - sender_detail
+    Notification:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        notification_type:
+          allOf:
+          - $ref: '#/components/schemas/NotificationTypeEnum'
+          readOnly: true
+        title:
+          type: string
+          readOnly: true
+        body:
+          type: string
+          readOnly: true
+        actor_detail:
+          allOf:
+          - $ref: '#/components/schemas/UserBrief'
+          readOnly: true
+        task:
+          type: string
+          format: uuid
+          readOnly: true
+          nullable: true
+        message:
+          type: string
+          format: uuid
+          readOnly: true
+          nullable: true
+        is_read:
+          type: boolean
+          readOnly: true
+        read_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - actor_detail
+      - body
+      - created_at
+      - id
+      - is_read
+      - message
+      - notification_type
+      - read_at
+      - task
+      - title
+    NotificationTypeEnum:
+      enum:
+      - task_assigned
+      - deadline_reminder
+      - task_overdue
+      - task_completed
+      - new_message
+      type: string
+      description: |-
+        * `task_assigned` - Task Assigned
+        * `deadline_reminder` - Deadline Reminder
+        * `task_overdue` - Task Overdue
+        * `task_completed` - Task Completed
+        * `new_message` - New Message
     PaginatedConversationList:
       type: object
       required:
@@ -2076,6 +2359,29 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Message'
+    PaginatedNotificationList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Notification'
     PaginatedReportList:
       type: object
       required:
@@ -2498,6 +2804,18 @@ components:
           format: date-time
           readOnly: true
           nullable: true
+        is_archived:
+          type: boolean
+          readOnly: true
+        archived_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        archived_by:
+          type: integer
+          readOnly: true
+          nullable: true
         progress:
           type: integer
           maximum: 100
@@ -2753,6 +3071,18 @@ components:
           format: date-time
           readOnly: true
           nullable: true
+        is_archived:
+          type: boolean
+          readOnly: true
+        archived_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        archived_by:
+          type: integer
+          readOnly: true
+          nullable: true
         progress:
           type: integer
           maximum: 100
@@ -2766,23 +3096,30 @@ components:
           format: date-time
           readOnly: true
       required:
+      - archived_at
+      - archived_by
       - assignee_details
       - completed_at
       - created_at
       - created_by
       - department
       - id
+      - is_archived
       - title
       - updated_at
     TaskStatusEnum:
       enum:
+      - backlog
       - not_started
       - in_progress
+      - on_hold
       - completed
       type: string
       description: |-
+        * `backlog` - Backlog
         * `not_started` - Not Started
         * `in_progress` - In Progress
+        * `on_hold` - On Hold
         * `completed` - Completed
     ThemeEnum:
       enum:

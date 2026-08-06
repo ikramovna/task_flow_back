@@ -4,7 +4,8 @@ from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from .models import Department, Event, Task, User
+from .models import Conversation, ConversationParticipant, Department, Event, Message, Notification, Task, User, UserPreference
+from .notifications import generate_deadline_notifications
 
 
 class DepartmentScopedApiTests(APITestCase):
@@ -339,3 +340,95 @@ class DepartmentScopedApiTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertFalse(Event.objects.filter(title="Member planning").exists())
+
+
+class NotificationApiTests(APITestCase):
+    def setUp(self):
+        self.department = Department.objects.create(name="Product", code="product")
+        self.owner = User.objects.create_user(
+            username="notification-owner", email="notification-owner@example.com",
+            password="pass12345", department=self.department, role=User.Role.OWNER,
+        )
+        self.member = User.objects.create_user(
+            username="notification-member", email="notification-member@example.com",
+            password="pass12345", department=self.department,
+        )
+        self.other = User.objects.create_user(
+            username="notification-other", email="notification-other@example.com",
+            password="pass12345", department=self.department,
+        )
+        self.client.force_authenticate(self.owner)
+
+    def test_task_assignment_creates_notification_and_respects_preference(self):
+        response = self.client.post(
+            "/api/v1/tasks/",
+            {"department": self.department.pk, "title": "Ship release", "assignees": [self.member.pk]},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(Notification.objects.filter(
+            recipient=self.member, notification_type=Notification.Type.TASK_ASSIGNED
+        ).exists())
+
+        UserPreference.objects.update_or_create(user=self.other, defaults={"task_assigned": False})
+        task = Task.objects.get(pk=response.data["id"])
+        response = self.client.patch(
+            f"/api/v1/tasks/{task.pk}/", {"assignees": [self.member.pk, self.other.pk]}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertFalse(Notification.objects.filter(recipient=self.other).exists())
+
+    def test_completed_task_notifies_creator(self):
+        task = Task.objects.create(department=self.department, title="Finish docs", created_by=self.owner)
+        task.assignees.add(self.member)
+        self.client.force_authenticate(self.member)
+        response = self.client.patch(
+            f"/api/v1/tasks/{task.pk}/", {"status": Task.Status.COMPLETED}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(Notification.objects.filter(
+            recipient=self.owner, notification_type=Notification.Type.TASK_COMPLETED, task=task
+        ).exists())
+
+    def test_new_message_notifies_unmuted_participants(self):
+        conversation = Conversation.objects.create(department=self.department, title="Release")
+        ConversationParticipant.objects.create(conversation=conversation, user=self.owner)
+        ConversationParticipant.objects.create(conversation=conversation, user=self.member)
+        ConversationParticipant.objects.create(conversation=conversation, user=self.other, is_muted=True)
+        conversation.participants.add(self.owner, self.member, self.other)
+        response = self.client.post(
+            "/api/v1/messages/", {"conversation": conversation.pk, "body": "Ready to ship"}, format="json"
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(Notification.objects.filter(recipient=self.member, message_id=response.data["id"]).exists())
+        self.assertFalse(Notification.objects.filter(recipient=self.other).exists())
+
+    def test_notification_api_is_private_and_supports_read_actions(self):
+        own = Notification.objects.create(
+            recipient=self.owner, notification_type=Notification.Type.TASK_OVERDUE, title="Overdue"
+        )
+        Notification.objects.create(
+            recipient=self.member, notification_type=Notification.Type.TASK_OVERDUE, title="Private"
+        )
+        response = self.client.get("/api/v1/notifications/")
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(self.client.get("/api/v1/notifications/unread_count/").data["unread_count"], 1)
+        response = self.client.post(f"/api/v1/notifications/{own.pk}/mark_read/")
+        self.assertTrue(response.data["is_read"])
+        Notification.objects.create(
+            recipient=self.owner, notification_type=Notification.Type.TASK_OVERDUE, title="Another"
+        )
+        self.assertEqual(self.client.post("/api/v1/notifications/mark_all_read/").data["updated"], 1)
+
+    def test_deadline_generation_is_idempotent(self):
+        UserPreference.objects.update_or_create(user=self.member, defaults={"deadline_reminder": True})
+        task = Task.objects.create(
+            department=self.department, title="Deploy", created_by=self.owner,
+            due_date=timezone.localdate() + timedelta(days=1),
+        )
+        task.assignees.add(self.member)
+        self.assertEqual(generate_deadline_notifications(), 1)
+        self.assertEqual(generate_deadline_notifications(), 0)
+        self.assertEqual(Notification.objects.filter(
+            recipient=self.member, notification_type=Notification.Type.DEADLINE_REMINDER
+        ).count(), 1)

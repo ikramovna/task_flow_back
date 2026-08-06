@@ -23,10 +23,11 @@ from rest_framework.views import APIView
 from drf_spectacular.utils import extend_schema, inline_serializer
 
 from .filters import EventFilter, TaskFilter
-from .models import Conversation, ConversationParticipant, Department, Event, Message, Report, Task, User, UserPreference
+from .models import Conversation, ConversationParticipant, Department, Event, Message, Notification, Report, Task, User, UserPreference
+from .notifications import notify_new_message, notify_task_assigned, notify_task_completed
 from .pagination import StandardPagination
 from .permissions import IsDepartmentMember
-from .serializers import AccountDeleteSerializer, ConversationSerializer, DepartmentSerializer, EventSerializer, MemberSerializer, MessageSerializer, PasswordChangeSerializer, PasswordResetConfirmSerializer, PasswordResetRequestSerializer, ProfileSerializer, ReportSerializer, TaskSerializer, TwoFactorSerializer, UserBriefSerializer, UserPreferenceSerializer
+from .serializers import AccountDeleteSerializer, ConversationSerializer, DepartmentSerializer, EventSerializer, MemberSerializer, MessageSerializer, NotificationSerializer, PasswordChangeSerializer, PasswordResetConfirmSerializer, PasswordResetRequestSerializer, ProfileSerializer, ReportSerializer, TaskSerializer, TwoFactorSerializer, UserBriefSerializer, UserPreferenceSerializer
 
 
 class PasswordResetRequestView(generics.GenericAPIView):
@@ -224,7 +225,8 @@ class TaskViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
     def perform_create(self, serializer):
         department = serializer.validated_data["department"]
         self.ensure_department_task_manager(department)
-        serializer.save(created_by=self.request.user)
+        task = serializer.save(created_by=self.request.user)
+        notify_task_assigned(task, self.request.user, task.assignees.all())
 
     def ensure_department_task_manager(self, department):
         user = self.request.user
@@ -256,10 +258,14 @@ class TaskViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
                 )
 
         previous = serializer.instance.status
+        previous_assignee_ids = set(serializer.instance.assignees.values_list("id", flat=True))
         task = serializer.save()
+        new_assignees = task.assignees.exclude(id__in=previous_assignee_ids)
+        notify_task_assigned(task, self.request.user, new_assignees)
         if task.status == Task.Status.COMPLETED and previous != Task.Status.COMPLETED:
             task.progress, task.completed_at = 100, timezone.now()
             task.save(update_fields=["progress", "completed_at", "updated_at"])
+            notify_task_completed(task, self.request.user)
         elif task.status != Task.Status.COMPLETED and previous == Task.Status.COMPLETED:
             task.completed_at = None
             task.save(update_fields=["completed_at", "updated_at"])
@@ -575,8 +581,9 @@ class MessageViewSet(viewsets.ModelViewSet):
         conversation = serializer.validated_data["conversation"]
         if not conversation.participants.filter(pk=self.request.user.pk).exists():
             raise serializers.ValidationError({"conversation": "You are not a participant."})
-        serializer.save(sender=self.request.user)
+        message = serializer.save(sender=self.request.user)
         Conversation.objects.filter(pk=conversation.pk).update(updated_at=timezone.now())
+        notify_new_message(message)
 
     def perform_destroy(self, instance):
         if instance.sender != self.request.user:
@@ -585,6 +592,40 @@ class MessageViewSet(viewsets.ModelViewSet):
         instance.body = ""
         instance.attachment.delete(save=False)
         instance.save(update_fields=["is_deleted", "body", "attachment", "updated_at"])
+
+
+class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = Notification.objects.none()
+    serializer_class = NotificationSerializer
+    permission_classes = (IsAuthenticated,)
+    pagination_class = StandardPagination
+    filter_backends = (DjangoFilterBackend, filters.OrderingFilter)
+    filterset_fields = ("notification_type",)
+    ordering_fields = ("created_at",)
+
+    def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return self.queryset
+        qs = Notification.objects.filter(recipient=self.request.user).select_related("actor", "task", "message")
+        unread = self.request.query_params.get("unread", "").lower()
+        return qs.filter(read_at__isnull=True) if unread in ("1", "true", "yes") else qs
+
+    @action(detail=False, methods=["get"])
+    def unread_count(self, request):
+        return Response({"unread_count": self.get_queryset().filter(read_at__isnull=True).count()})
+
+    @action(detail=True, methods=["post"])
+    def mark_read(self, request, pk=None):
+        notification = self.get_object()
+        if notification.read_at is None:
+            notification.read_at = timezone.now()
+            notification.save(update_fields=["read_at", "updated_at"])
+        return Response(self.get_serializer(notification).data)
+
+    @action(detail=False, methods=["post"])
+    def mark_all_read(self, request):
+        updated = self.get_queryset().filter(read_at__isnull=True).update(read_at=timezone.now())
+        return Response({"updated": updated})
 
 
 class ReportViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
