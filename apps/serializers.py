@@ -14,6 +14,14 @@ class UserBriefSerializer(serializers.ModelSerializer):
         fields = ("id", "email", "full_name", "avatar", "phone", "job_title", "department", "role", "is_active")
 
 
+class TaskCreatorSerializer(serializers.ModelSerializer):
+    full_name = serializers.CharField(source="get_full_name", read_only=True)
+
+    class Meta:
+        model = User
+        fields = ("id", "full_name", "avatar")
+
+
 class ProfileSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(source="get_full_name", read_only=True)
 
@@ -83,10 +91,11 @@ class MemberSerializer(serializers.ModelSerializer):
 class TaskSerializer(serializers.ModelSerializer):
     assignee_details = UserBriefSerializer(source="assignees", many=True, read_only=True)
     main_assignee_detail = UserBriefSerializer(source="main_assignee", read_only=True)
+    created_by_detail = TaskCreatorSerializer(source="created_by", read_only=True)
 
     class Meta:
         model = Task
-        fields = ("id", "department", "title", "description", "status", "priority", "category", "assignees", "assignee_details", "main_assignee", "main_assignee_detail", "created_by", "due_date", "completed_at", "is_hidden", "is_archived", "archived_at", "archived_by", "progress", "created_at", "updated_at")
+        fields = ("id", "department", "title", "description", "status", "priority", "category", "assignees", "assignee_details", "main_assignee", "main_assignee_detail", "created_by", "created_by_detail", "due_date", "completed_at", "is_hidden", "is_archived", "archived_at", "archived_by", "progress", "created_at", "updated_at")
         read_only_fields = ("main_assignee", "created_by", "completed_at", "is_archived", "archived_at", "archived_by")
 
     def validate(self, attrs):

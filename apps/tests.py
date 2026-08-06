@@ -59,6 +59,11 @@ class DepartmentScopedApiTests(APITestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertNotIn("project", response.data)
+        self.assertEqual(str(response.data["created_by"]), str(self.owner.pk))
+        self.assertEqual(
+            set(response.data["created_by_detail"]),
+            {"id", "full_name", "avatar"},
+        )
 
     def test_first_assignee_is_main_and_only_main_can_change_status(self):
         second = User.objects.create_user(

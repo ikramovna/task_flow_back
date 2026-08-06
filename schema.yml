@@ -2807,6 +2807,10 @@ components:
         created_by:
           type: integer
           readOnly: true
+        created_by_detail:
+          allOf:
+          - $ref: '#/components/schemas/TaskCreator'
+          readOnly: true
         due_date:
           type: string
           format: date
@@ -3084,6 +3088,10 @@ components:
         created_by:
           type: integer
           readOnly: true
+        created_by_detail:
+          allOf:
+          - $ref: '#/components/schemas/TaskCreator'
+          readOnly: true
         due_date:
           type: string
           format: date
@@ -3126,6 +3134,7 @@ components:
       - completed_at
       - created_at
       - created_by
+      - created_by_detail
       - department
       - id
       - is_archived
@@ -3133,6 +3142,21 @@ components:
       - main_assignee_detail
       - title
       - updated_at
+    TaskCreator:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        full_name:
+          type: string
+          readOnly: true
+        avatar:
+          type: string
+          format: uri
+      required:
+      - full_name
+      - id
     TaskStatusEnum:
       enum:
       - backlog
