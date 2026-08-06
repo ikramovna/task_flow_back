@@ -94,8 +94,16 @@ class TaskSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         department = attrs.get("department") or self.instance.department
         assignees = attrs.get("assignees", self.instance.assignees.all() if self.instance else [])
+        requester = self.context["request"].user
+        can_assign_across_departments = requester.role in (
+            User.Role.OWNER,
+            User.Role.ADMIN,
+            User.Role.MANAGER,
+        )
         for user in assignees:
-            if user.department_id != department.id or not user.is_active:
+            if not user.is_active:
+                raise serializers.ValidationError({"assignees": "Every assignee must be active."})
+            if not can_assign_across_departments and user.department_id != department.id:
                 raise serializers.ValidationError({"assignees": "Every assignee must belong to the task department."})
         return attrs
 
@@ -114,8 +122,16 @@ class EventSerializer(serializers.ModelSerializer):
         if starts and ends and ends <= starts:
             raise serializers.ValidationError({"ends_at": "Event must end after it starts."})
         department = attrs.get("department") or self.instance.department
+        requester = self.context["request"].user
+        can_invite_across_departments = requester.role in (
+            User.Role.OWNER,
+            User.Role.ADMIN,
+            User.Role.MANAGER,
+        )
         for user in attrs.get("attendees", []):
-            if user.department_id != department.id or not user.is_active:
+            if not user.is_active:
+                raise serializers.ValidationError({"attendees": "Every attendee must be active."})
+            if not can_invite_across_departments and user.department_id != department.id:
                 raise serializers.ValidationError({"attendees": "Every attendee must belong to the department."})
         return attrs
 

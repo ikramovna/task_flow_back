@@ -387,6 +387,8 @@ class DashboardView(APIView):
         completed = tasks.filter(status=Task.Status.COMPLETED).count()
         in_progress = tasks.filter(status=Task.Status.IN_PROGRESS).count()
         not_started = tasks.filter(status=Task.Status.NOT_STARTED).count()
+        backlog = tasks.filter(status=Task.Status.BACKLOG).count()
+        on_hold = tasks.filter(status=Task.Status.ON_HOLD).count()
         overdue = tasks.exclude(status=Task.Status.COMPLETED).filter(due_date__lt=today).count()
 
         def percent(value):
@@ -455,6 +457,8 @@ class DashboardView(APIView):
                 "completed_tasks": {"count": completed, "percentage": percent(completed)},
                 "in_progress_tasks": {"count": in_progress, "percentage": percent(in_progress)},
                 "not_started_tasks": {"count": not_started, "percentage": percent(not_started)},
+                "backlog_tasks": {"count": backlog, "percentage": percent(backlog)},
+                "on_hold_tasks": {"count": on_hold, "percentage": percent(on_hold)},
                 "overdue_tasks": {"count": overdue, "percentage": percent(overdue)},
             },
             "today_events": today_events,

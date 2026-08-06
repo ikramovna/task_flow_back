@@ -59,6 +59,43 @@ class DepartmentScopedApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertNotIn("project", response.data)
 
+    def test_privileged_roles_can_assign_task_across_departments(self):
+        other_department = Department.objects.create(name="Operations", code="operations-tasks")
+        outsider = User.objects.create_user(
+            username="task-outsider",
+            email="task-outsider@example.com",
+            password="pass12345",
+            department=other_department,
+        )
+        users_by_role = {User.Role.OWNER: self.owner}
+        for role in (User.Role.ADMIN, User.Role.MANAGER):
+            users_by_role[role] = User.objects.create_user(
+                username=f"task-{role}",
+                email=f"task-{role}@example.com",
+                password="pass12345",
+                department=self.department,
+                role=role,
+            )
+
+        for role, requester in users_by_role.items():
+            with self.subTest(role=role):
+                self.client.force_authenticate(requester)
+                response = self.client.post(
+                    "/api/v1/tasks/",
+                    {
+                        "department": self.department.pk,
+                        "title": f"{role} cross-department task",
+                        "assignees": [outsider.pk],
+                    },
+                    format="json",
+                )
+                self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+                self.assertTrue(
+                    Task.objects.get(title=f"{role} cross-department task")
+                    .assignees.filter(pk=outsider.pk)
+                    .exists()
+                )
+
     def test_manager_has_admin_access_across_departments(self):
         other_department = Department.objects.create(name="Finance", code="finance")
         manager = User.objects.create_user(
@@ -203,6 +240,18 @@ class DepartmentScopedApiTests(APITestCase):
             status=Task.Status.IN_PROGRESS,
             due_date=timezone.localdate() + timedelta(days=2),
         )
+        Task.objects.create(
+            department=self.department,
+            title="Future task",
+            created_by=self.owner,
+            status=Task.Status.BACKLOG,
+        )
+        Task.objects.create(
+            department=self.department,
+            title="Paused task",
+            created_by=self.owner,
+            status=Task.Status.ON_HOLD,
+        )
         starts_at = timezone.now() + timedelta(hours=1)
         Event.objects.create(
             department=self.department,
@@ -222,22 +271,71 @@ class DepartmentScopedApiTests(APITestCase):
         self.assertIn("tasks_by_department", response.data)
         self.assertIn("recent_tasks", response.data)
         self.assertEqual(response.data["summary"]["in_progress_tasks"]["count"], 1)
+        self.assertEqual(response.data["summary"]["backlog_tasks"]["count"], 1)
+        self.assertEqual(response.data["summary"]["on_hold_tasks"]["count"], 1)
 
-    def test_event_attendees_must_belong_to_department(self):
+    def test_privileged_roles_can_invite_attendee_from_another_department(self):
+        other_department = Department.objects.create(name="Finance", code="finance-events")
         outsider = User.objects.create_user(
-            username="outsider", email="outsider@example.com", password="pass12345"
+            username="outsider",
+            email="outsider@example.com",
+            password="pass12345",
+            department=other_department,
         )
         starts_at = timezone.now()
+        users_by_role = {User.Role.OWNER: self.owner}
+        for role in (User.Role.ADMIN, User.Role.MANAGER):
+            users_by_role[role] = User.objects.create_user(
+                username=f"event-{role}",
+                email=f"event-{role}@example.com",
+                password="pass12345",
+                department=self.department,
+                role=role,
+            )
+
+        for role, requester in users_by_role.items():
+            with self.subTest(role=role):
+                self.client.force_authenticate(requester)
+                response = self.client.post(
+                    "/api/v1/events/",
+                    {
+                        "department": self.department.pk,
+                        "title": f"{role} planning",
+                        "starts_at": starts_at,
+                        "ends_at": starts_at + timedelta(hours=1),
+                        "attendees": [outsider.pk],
+                    },
+                    format="json",
+                )
+                self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+                self.assertTrue(
+                    Event.objects.get(title=f"{role} planning")
+                    .attendees.filter(pk=outsider.pk)
+                    .exists()
+                )
+
+    def test_member_cannot_invite_attendee_from_another_department(self):
+        other_department = Department.objects.create(name="Legal", code="legal-events")
+        outsider = User.objects.create_user(
+            username="member-outsider",
+            email="member-outsider@example.com",
+            password="pass12345",
+            department=other_department,
+        )
+        starts_at = timezone.now()
+        self.client.force_authenticate(self.member)
+
         response = self.client.post(
             "/api/v1/events/",
             {
                 "department": self.department.pk,
-                "title": "Planning",
+                "title": "Member planning",
                 "starts_at": starts_at,
                 "ends_at": starts_at + timedelta(hours=1),
                 "attendees": [outsider.pk],
             },
             format="json",
         )
+
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertFalse(Event.objects.filter(title="Planning").exists())
+        self.assertFalse(Event.objects.filter(title="Member planning").exists())
