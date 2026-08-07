@@ -16,6 +16,7 @@ from django.utils.http import urlsafe_base64_encode
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters, generics, serializers, status, viewsets
 from rest_framework.decorators import action
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
@@ -27,7 +28,8 @@ from .models import Conversation, ConversationParticipant, Department, Event, Me
 from .notifications import notify_new_message, notify_task_assigned, notify_task_completed
 from .pagination import StandardPagination
 from .permissions import IsDepartmentMember
-from .serializers import AccountDeleteSerializer, ConversationSerializer, DepartmentSerializer, EventSerializer, MemberSerializer, MessageSerializer, NotificationSerializer, PasswordChangeSerializer, PasswordResetConfirmSerializer, PasswordResetRequestSerializer, ProfileSerializer, ReportSerializer, TaskCreatorSerializer, TaskSerializer, TwoFactorSerializer, UserBriefSerializer, UserPreferenceSerializer
+from .serializers import AccountDeleteSerializer, ConversationSerializer, DepartmentSerializer, EventSerializer, MemberSerializer, MessageSerializer, NotificationSerializer, PasswordChangeSerializer, PasswordResetConfirmSerializer, PasswordResetRequestSerializer, ProfileSerializer, ReportSerializer, SupportBotMessageSerializer, TaskCreatorSerializer, TaskSerializer, TwoFactorSerializer, UserBriefSerializer, UserPreferenceSerializer
+from .telegram_support import TelegramSupportError, send_support_message
 from .task_visibility import PRIVILEGED_TASK_ROLES, visible_tasks_for
 
 
@@ -521,6 +523,54 @@ class DashboardView(APIView):
             "recent_tasks": recent_tasks,
             "generated_at": now,
         })
+
+
+class SupportBotView(APIView):
+    permission_classes = (IsAuthenticated,)
+    parser_classes = (JSONParser, FormParser, MultiPartParser)
+
+    @extend_schema(
+        request=SupportBotMessageSerializer,
+        responses={200: inline_serializer(
+            name="SupportBotResponse",
+            fields={"detail": serializers.CharField()},
+        )},
+    )
+    def post(self, request):
+        serializer = SupportBotMessageSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        token = settings.TELEGRAM_SUPPORT_BOT_TOKEN
+        chat_id = settings.TELEGRAM_SUPPORT_CHAT_ID
+        if not token or not chat_id:
+            return Response(
+                {"detail": "Support bot is not configured."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        user = request.user
+        sender_name = user.get_full_name() or user.username or user.email
+        department = user.department.name if user.department else "No department"
+        text = (
+            "TaskFlow support request\n"
+            f"From: {sender_name}\n"
+            f"Email: {user.email}\n"
+            f"Department: {department}\n\n"
+            f"{serializer.validated_data['message']}"
+        )
+        try:
+            send_support_message(
+                token=token,
+                chat_id=chat_id,
+                text=text,
+                screenshot=serializer.validated_data.get("screenshot"),
+            )
+        except TelegramSupportError:
+            return Response(
+                {"detail": "Could not send the support request. Please try again."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+        return Response({"detail": "Support request sent successfully."})
 
 
 class ProfileView(generics.RetrieveUpdateAPIView):

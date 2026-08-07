@@ -2,7 +2,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
-from .views import AccountDeleteView, AnalyticsView, ConversationViewSet, DashboardView, DepartmentViewSet, EventViewSet, MemberViewSet, MessageViewSet, NotificationViewSet, PasswordChangeView, PasswordResetConfirmView, PasswordResetRequestView, PreferenceView, ProfileView, ReportViewSet, TaskViewSet, TwoFactorView
+from .views import AccountDeleteView, AnalyticsView, ConversationViewSet, DashboardView, DepartmentViewSet, EventViewSet, MemberViewSet, MessageViewSet, NotificationViewSet, PasswordChangeView, PasswordResetConfirmView, PasswordResetRequestView, PreferenceView, ProfileView, ReportViewSet, SupportBotView, TaskViewSet, TwoFactorView
 
 router = DefaultRouter()
 router.register("departments", DepartmentViewSet, basename="department")
@@ -27,5 +27,6 @@ urlpatterns = [
     path("me/delete-account/", AccountDeleteView.as_view(), name="delete-account"),
     path("analytics/", AnalyticsView.as_view(), name="analytics"),
     path("dashboard/", DashboardView.as_view(), name="dashboard"),
+    path("support/bot/", SupportBotView.as_view(), name="support-bot"),
     path("", include(router.urls)),
 ]

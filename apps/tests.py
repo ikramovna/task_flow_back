@@ -1,5 +1,7 @@
 from datetime import timedelta
+from unittest.mock import patch
 
+from django.test import override_settings
 from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -35,6 +37,40 @@ class DepartmentScopedApiTests(APITestCase):
     def test_support_ticket_endpoint_is_removed(self):
         response = self.client.get("/api/v1/support-tickets/")
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    @override_settings(
+        TELEGRAM_SUPPORT_BOT_TOKEN="test-token",
+        TELEGRAM_SUPPORT_CHAT_ID="-100123",
+    )
+    @patch("apps.views.send_support_message")
+    def test_support_bot_sends_authenticated_user_details(self, send_message):
+        self.owner.first_name = "Test"
+        self.owner.last_name = "Owner"
+        self.owner.save(update_fields=["first_name", "last_name"])
+
+        response = self.client.post(
+            "/api/v1/support/bot/",
+            {"message": "The dashboard is not loading."},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        kwargs = send_message.call_args.kwargs
+        self.assertEqual(kwargs["token"], "test-token")
+        self.assertEqual(kwargs["chat_id"], "-100123")
+        self.assertIn("From: Test Owner", kwargs["text"])
+        self.assertIn("Department: Engineering", kwargs["text"])
+        self.assertIn("The dashboard is not loading.", kwargs["text"])
+        self.assertIsNone(kwargs["screenshot"])
+
+    @override_settings(TELEGRAM_SUPPORT_BOT_TOKEN="", TELEGRAM_SUPPORT_CHAT_ID="")
+    def test_support_bot_reports_missing_configuration(self):
+        response = self.client.post(
+            "/api/v1/support/bot/",
+            {"message": "Need help"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_503_SERVICE_UNAVAILABLE)
 
     def test_time_entry_endpoint_is_removed(self):
         response = self.client.get("/api/v1/time-entries/")

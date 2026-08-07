@@ -6,6 +6,18 @@ from rest_framework import serializers
 from .models import Conversation, ConversationParticipant, Department, Event, Message, Notification, Report, Task, User, UserPreference
 
 
+class SupportBotMessageSerializer(serializers.Serializer):
+    message = serializers.CharField(max_length=3000, trim_whitespace=True)
+    screenshot = serializers.FileField(required=False, allow_null=True)
+
+    def validate_screenshot(self, value):
+        if value.size > 5 * 1024 * 1024:
+            raise serializers.ValidationError("Screenshot must not exceed 5 MB.")
+        if value.content_type not in {"image/jpeg", "image/png", "image/webp"}:
+            raise serializers.ValidationError("Only JPEG, PNG, and WebP screenshots are supported.")
+        return value
+
+
 class UserBriefSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(source="get_full_name", read_only=True)
 

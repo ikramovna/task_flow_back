@@ -33,6 +33,9 @@ DEBUG = os.getenv('DEBUG', 'True').lower() == 'true'
 
 ALLOWED_HOSTS = [host.strip() for host in os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',') if host.strip()]
 
+TELEGRAM_SUPPORT_BOT_TOKEN = os.getenv('TELEGRAM_SUPPORT_BOT_TOKEN', '')
+TELEGRAM_SUPPORT_CHAT_ID = os.getenv('TELEGRAM_SUPPORT_CHAT_ID', '')
+
 
 # Application definition
 
