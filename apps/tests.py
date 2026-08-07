@@ -232,6 +232,7 @@ class DepartmentScopedApiTests(APITestCase):
 
         for role, requester in users_by_role.items():
             with self.subTest(role=role):
+                requester.accessible_departments.add(other_department)
                 self.client.force_authenticate(requester)
                 response = self.client.post(
                     "/api/v1/tasks/",
@@ -249,7 +250,7 @@ class DepartmentScopedApiTests(APITestCase):
                     .exists()
                 )
 
-    def test_manager_has_admin_access_across_departments(self):
+    def test_manager_access_is_limited_to_selected_departments(self):
         other_department = Department.objects.create(name="Finance", code="finance")
         manager = User.objects.create_user(
             username="manager",
@@ -266,11 +267,21 @@ class DepartmentScopedApiTests(APITestCase):
             format="json",
         )
 
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(self.client.get("/api/v1/departments/").data["count"], 1)
+
+        manager.accessible_departments.add(other_department)
+        response = self.client.post(
+            "/api/v1/tasks/",
+            {"department": other_department.pk, "title": "Prepare budget"},
+            format="json",
+        )
+
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(str(response.data["department"]), str(other_department.pk))
         self.assertEqual(self.client.get("/api/v1/departments/").data["count"], 2)
 
-    def test_manager_sees_only_assigned_or_self_created_tasks(self):
+    def test_manager_sees_all_tasks_in_accessible_department(self):
         manager = User.objects.create_user(
             username="manager-tasks",
             email="manager-tasks@example.com",
@@ -301,7 +312,7 @@ class DepartmentScopedApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(
             {item["title"] for item in response.data["results"]},
-            {"Assigned to manager", "Created by manager"},
+            {"Assigned to manager", "Created by manager", "Unrelated task"},
         )
 
     def test_member_cannot_archive_assigned_completed_task(self):
@@ -454,6 +465,7 @@ class DepartmentScopedApiTests(APITestCase):
 
         for role, requester in users_by_role.items():
             with self.subTest(role=role):
+                requester.accessible_departments.add(other_department)
                 self.client.force_authenticate(requester)
                 response = self.client.post(
                     "/api/v1/events/",

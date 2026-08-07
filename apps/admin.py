@@ -20,12 +20,12 @@ from .resources import (
 @admin.register(User)
 class TaskFlowUserAdmin(ImportExportMixin, UserAdmin):
     resource_classes = (UserResource,)
-    fieldsets = UserAdmin.fieldsets + (("TaskFlow", {"fields": ("department", "role", "avatar", "phone", "job_title")}),)
-    add_fieldsets = UserAdmin.add_fieldsets + (("TaskFlow", {"fields": ("email", "first_name", "last_name", "department", "role")}),)
-    list_display = ("email", "username", "full_name", "department", "role", "job_title", "is_staff", "is_active")
-    list_filter = ("role", "department", "is_active", "is_staff", "is_superuser", "groups")
-    search_fields = ("email", "username", "first_name", "last_name", "phone", "job_title", "department__name")
-    autocomplete_fields = ("department",)
+    fieldsets = UserAdmin.fieldsets + (("TaskFlow", {"fields": ("department", "accessible_departments", "has_all_departments_access", "role", "avatar", "phone", "job_title")}),)
+    add_fieldsets = UserAdmin.add_fieldsets + (("TaskFlow", {"fields": ("email", "first_name", "last_name", "department", "accessible_departments", "has_all_departments_access", "role")}),)
+    list_display = ("email", "username", "full_name", "department", "role", "has_all_departments_access", "job_title", "is_staff", "is_active")
+    list_filter = ("role", "department", "has_all_departments_access", "is_active", "is_staff", "is_superuser", "groups")
+    search_fields = ("email", "username", "first_name", "last_name", "phone", "job_title", "department__name", "accessible_departments__name")
+    autocomplete_fields = ("department", "accessible_departments")
     ordering = ("email",)
 
     @admin.display(description="Full name", ordering="first_name")

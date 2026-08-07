@@ -29,10 +29,28 @@ class User(AbstractUser):
     department = models.ForeignKey(
         "Department", on_delete=models.SET_NULL, related_name="users", null=True, blank=True
     )
+    accessible_departments = models.ManyToManyField(
+        "Department",
+        blank=True,
+        related_name="users_with_access",
+        help_text="Additional departments this user may access. The primary department is always included.",
+    )
+    has_all_departments_access = models.BooleanField(
+        default=False,
+        help_text="Allow access to every department, including departments created later.",
+    )
     role = models.CharField(max_length=16, choices=Role.choices, default=Role.MEMBER)
 
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = ["username"]
+
+    def can_access_department(self, department) -> bool:
+        department_id = getattr(department, "pk", department)
+        if self.is_superuser or self.has_all_departments_access:
+            return True
+        if self.department_id is not None and str(self.department_id) == str(department_id):
+            return True
+        return self.accessible_departments.filter(pk=department_id).exists()
 
 
 class Department(TimeStampedModel):
