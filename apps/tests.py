@@ -350,6 +350,9 @@ class DepartmentScopedApiTests(APITestCase):
         self.assertEqual(response.data["task_completion_rate"], 100)
 
     def test_dashboard_returns_english_sections(self):
+        self.owner.first_name = "Dashboard"
+        self.owner.last_name = "Owner"
+        self.owner.save(update_fields=["first_name", "last_name"])
         Task.objects.create(
             department=self.department,
             title="Prepare student list",
@@ -390,6 +393,9 @@ class DepartmentScopedApiTests(APITestCase):
         self.assertEqual(response.data["summary"]["in_progress_tasks"]["count"], 1)
         self.assertEqual(response.data["summary"]["backlog_tasks"]["count"], 1)
         self.assertEqual(response.data["summary"]["on_hold_tasks"]["count"], 1)
+        creator = response.data["recent_tasks"][0]["created_by_detail"]
+        self.assertEqual(set(creator), {"id", "full_name", "avatar"})
+        self.assertEqual(creator["full_name"], "Dashboard Owner")
 
     def test_privileged_roles_can_invite_attendee_from_another_department(self):
         other_department = Department.objects.create(name="Finance", code="finance-events")

@@ -27,7 +27,7 @@ from .models import Conversation, ConversationParticipant, Department, Event, Me
 from .notifications import notify_new_message, notify_task_assigned, notify_task_completed
 from .pagination import StandardPagination
 from .permissions import IsDepartmentMember
-from .serializers import AccountDeleteSerializer, ConversationSerializer, DepartmentSerializer, EventSerializer, MemberSerializer, MessageSerializer, NotificationSerializer, PasswordChangeSerializer, PasswordResetConfirmSerializer, PasswordResetRequestSerializer, ProfileSerializer, ReportSerializer, TaskSerializer, TwoFactorSerializer, UserBriefSerializer, UserPreferenceSerializer
+from .serializers import AccountDeleteSerializer, ConversationSerializer, DepartmentSerializer, EventSerializer, MemberSerializer, MessageSerializer, NotificationSerializer, PasswordChangeSerializer, PasswordResetConfirmSerializer, PasswordResetRequestSerializer, ProfileSerializer, ReportSerializer, TaskCreatorSerializer, TaskSerializer, TwoFactorSerializer, UserBriefSerializer, UserPreferenceSerializer
 from .task_visibility import PRIVILEGED_TASK_ROLES, visible_tasks_for
 
 
@@ -495,6 +495,10 @@ class DashboardView(APIView):
                 "department": {"id": str(task.department_id), "name": task.department.name},
                 "status": task.status,
                 "priority": task.priority,
+                "created_by_detail": TaskCreatorSerializer(
+                    task.created_by,
+                    context={"request": request},
+                ).data,
                 "created_at": task.created_at,
             }
             for task in tasks.order_by("-created_at")[:5]
