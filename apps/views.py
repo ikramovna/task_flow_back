@@ -279,7 +279,11 @@ class TaskViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
         return qs
 
     def perform_create(self, serializer):
-        department = serializer.validated_data["department"]
+        department = serializer.validated_data.get("department")
+        if department is None:
+            raise serializers.ValidationError({
+                "assignees": "Select at least one assignee with a department."
+            })
         self.ensure_department_task_manager(department)
         task = serializer.save(created_by=self.request.user)
         notify_task_assigned(task, self.request.user, task.assignees.all())

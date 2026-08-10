@@ -108,13 +108,26 @@ class TaskSerializer(serializers.ModelSerializer):
     class Meta:
         model = Task
         fields = ("id", "department", "title", "description", "status", "priority", "category", "assignees", "assignee_details", "main_assignee", "main_assignee_detail", "created_by", "created_by_detail", "due_date", "completed_at", "is_hidden", "is_archived", "archived_at", "archived_by", "progress", "created_at", "updated_at")
+        extra_kwargs = {"department": {"required": False}}
         read_only_fields = ("main_assignee", "created_by", "completed_at", "is_archived", "archived_at", "archived_by")
 
     def validate(self, attrs):
-        department = attrs.get("department") or self.instance.department
         assignees = attrs.get("assignees", self.instance.assignees.all() if self.instance else [])
+        department = attrs.get("department")
+        if department is None and "assignees" in attrs:
+            main_assignee = assignees[0] if assignees else None
+            department = main_assignee.department if main_assignee else None
+            if department is not None:
+                attrs["department"] = department
+        if department is None and self.instance is not None:
+            department = self.instance.department
+        if department is None:
+            raise serializers.ValidationError({
+                "assignees": "Select at least one assignee with a department."
+            })
         requester = self.context["request"].user
-        for user in assignees:
+        assignees_to_validate = assignees if self.instance is None or "assignees" in attrs else []
+        for user in assignees_to_validate:
             if not user.is_active:
                 raise serializers.ValidationError({"assignees": "Every assignee must be active."})
             if user.department_id != department.id and not requester.can_access_department(user.department_id):

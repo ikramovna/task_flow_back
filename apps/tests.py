@@ -204,6 +204,57 @@ class DepartmentScopedApiTests(APITestCase):
         self.assertEqual(response.data["status"], Task.Status.IN_PROGRESS)
         self.assertEqual(response.data["progress"], 25)
 
+    def test_task_department_is_inferred_from_first_assignee(self):
+        other_department = Department.objects.create(name="Operations", code="operations-auto")
+        main_assignee = User.objects.create_user(
+            username="operations-main",
+            email="operations-main@example.com",
+            password="pass12345",
+            department=other_department,
+        )
+        second_assignee = User.objects.create_user(
+            username="engineering-second",
+            email="engineering-second@example.com",
+            password="pass12345",
+            department=self.department,
+        )
+        self.owner.has_all_departments_access = True
+        self.owner.save(update_fields=["has_all_departments_access"])
+
+        response = self.client.post(
+            "/api/v1/tasks/",
+            {
+                "title": "Department inferred from main assignee",
+                "assignees": [main_assignee.pk, second_assignee.pk],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(str(response.data["department"]), str(other_department.pk))
+        self.assertEqual(str(response.data["main_assignee"]), str(main_assignee.pk))
+
+        self.client.force_authenticate(main_assignee)
+        update_response = self.client.patch(
+            f"/api/v1/tasks/{response.data['id']}/",
+            {"status": Task.Status.IN_PROGRESS, "progress": 30},
+            format="json",
+        )
+
+        self.assertEqual(update_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(update_response.data["status"], Task.Status.IN_PROGRESS)
+        self.assertEqual(update_response.data["progress"], 30)
+
+    def test_task_without_department_or_assignees_is_rejected(self):
+        response = self.client.post(
+            "/api/v1/tasks/",
+            {"title": "Missing assignee"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("assignees", response.data["errors"])
+
     def test_hidden_task_is_visible_only_to_privileged_roles_and_assignees(self):
         assignee = self.member
         unassigned = User.objects.create_user(
