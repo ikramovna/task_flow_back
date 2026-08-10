@@ -1,13 +1,70 @@
 from datetime import timedelta
 from unittest.mock import patch
 
+from django.contrib.auth.tokens import default_token_generator
+from django.core import mail
 from django.test import override_settings
 from django.utils import timezone
+from django.utils.encoding import force_bytes
+from django.utils.http import urlsafe_base64_encode
 from rest_framework import status
 from rest_framework.test import APITestCase
 
 from .models import Conversation, ConversationParticipant, Department, Event, Message, Notification, Task, User, UserPreference
 from .notifications import generate_deadline_notifications
+
+
+@override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+class PasswordResetApiTests(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="reset-user",
+            email="reset@example.com",
+            password="OldPassword123!",
+        )
+
+    def test_request_sends_reset_email_without_authentication(self):
+        response = self.client.post(
+            "/api/v1/auth/password-reset/",
+            {"email": self.user.email},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn("/reset-password?uid=", mail.outbox[0].body)
+        self.assertEqual(mail.outbox[0].to, [self.user.email])
+        self.assertEqual(mail.outbox[0].alternatives[0].mimetype, "text/html")
+        self.assertIn("cid:webster-logo", mail.outbox[0].alternatives[0].content)
+        self.assertEqual(mail.outbox[0].attachments[0].get_content_id(), "<webster-logo>")
+
+    def test_confirm_changes_password_and_token_cannot_be_reused(self):
+        uid = urlsafe_base64_encode(force_bytes(self.user.pk))
+        token = default_token_generator.make_token(self.user)
+        payload = {
+            "uid": uid,
+            "token": token,
+            "new_password": "NewPassword123!",
+            "confirm_password": "NewPassword123!",
+        }
+
+        response = self.client.post("/api/v1/auth/password-reset/confirm/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("NewPassword123!"))
+
+        response = self.client.post("/api/v1/auth/password-reset/confirm/", payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_unknown_email_returns_same_success_response_without_sending_email(self):
+        response = self.client.post(
+            "/api/v1/auth/password-reset/",
+            {"email": "unknown@example.com"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(mail.outbox), 0)
 
 
 class DepartmentScopedApiTests(APITestCase):
@@ -280,6 +337,63 @@ class DepartmentScopedApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(str(response.data["department"]), str(other_department.pk))
         self.assertEqual(self.client.get("/api/v1/departments/").data["count"], 2)
+
+    def test_owner_and_manager_with_all_department_access_need_no_primary_department(self):
+        target_department = Department.objects.create(name="Strategy", code="strategy")
+        attendee_department = Department.objects.create(name="Research", code="research")
+        assignee = User.objects.create_user(
+            username="all-access-assignee",
+            email="all-access-assignee@example.com",
+            password="pass12345",
+            department=attendee_department,
+        )
+        starts_at = timezone.now() + timedelta(hours=1)
+
+        for role in (User.Role.OWNER, User.Role.MANAGER):
+            with self.subTest(role=role):
+                requester = User.objects.create_user(
+                    username=f"all-access-{role}",
+                    email=f"all-access-{role}@example.com",
+                    password="pass12345",
+                    department=None,
+                    role=role,
+                    has_all_departments_access=True,
+                )
+                self.client.force_authenticate(requester)
+
+                task_response = self.client.post(
+                    "/api/v1/tasks/",
+                    {
+                        "department": target_department.pk,
+                        "title": f"{role} company-wide task",
+                        "assignees": [assignee.pk],
+                    },
+                    format="json",
+                )
+                event_response = self.client.post(
+                    "/api/v1/events/",
+                    {
+                        "department": target_department.pk,
+                        "title": f"{role} company-wide event",
+                        "starts_at": starts_at,
+                        "ends_at": starts_at + timedelta(hours=1),
+                        "attendees": [assignee.pk],
+                    },
+                    format="json",
+                )
+
+                self.assertEqual(task_response.status_code, status.HTTP_201_CREATED)
+                self.assertEqual(event_response.status_code, status.HTTP_201_CREATED)
+                self.assertTrue(
+                    Task.objects.get(title=f"{role} company-wide task")
+                    .assignees.filter(pk=assignee.pk)
+                    .exists()
+                )
+                self.assertTrue(
+                    Event.objects.get(title=f"{role} company-wide event")
+                    .attendees.filter(pk=assignee.pk)
+                    .exists()
+                )
 
     def test_manager_sees_all_tasks_in_accessible_department(self):
         manager = User.objects.create_user(

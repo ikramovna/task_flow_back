@@ -17,9 +17,8 @@ router.register("reports", ReportViewSet, basename="report")
 urlpatterns = [
     path("auth/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
     path("auth/token/refresh/", TokenRefreshView.as_view(), name="token_refresh"),
-    # Password reset is temporarily disabled. Uncomment when the frontend and SMTP are ready.
-    # path("auth/password-reset/", PasswordResetRequestView.as_view(), name="password-reset"),
-    # path("auth/password-reset/confirm/", PasswordResetConfirmView.as_view(), name="password-reset-confirm"),
+    path("auth/password-reset/", PasswordResetRequestView.as_view(), name="password-reset"),
+    path("auth/password-reset/confirm/", PasswordResetConfirmView.as_view(), name="password-reset-confirm"),
     path("me/", ProfileView.as_view(), name="profile"),
     path("me/preferences/", PreferenceView.as_view(), name="preferences"),
     path("me/change-password/", PasswordChangeView.as_view(), name="change-password"),

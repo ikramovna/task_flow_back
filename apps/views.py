@@ -1,11 +1,13 @@
 import csv
 import io
 from datetime import datetime, time, timedelta
+from email.mime.image import MIMEImage
 
 from django.core.files.base import ContentFile
-from django.core.mail import send_mail
+from django.core.mail import EmailMultiAlternatives
 from django.conf import settings
 from django.contrib.auth.tokens import default_token_generator
+from django.template.loader import render_to_string
 from django.http import FileResponse
 from django.db import transaction
 from django.db.models import Count, F, Prefetch, Q
@@ -49,20 +51,36 @@ class PasswordResetRequestView(generics.GenericAPIView):
             uid = urlsafe_base64_encode(force_bytes(user.pk))
             token = default_token_generator.make_token(user)
             reset_url = f"{settings.FRONTEND_URL.rstrip('/')}/reset-password?uid={uid}&token={token}"
-            send_mail(
-                subject="TaskFlow parolini tiklash",
-                message=(
-                    f"Salom {user.get_full_name() or user.email},\n\n"
-                    "TaskFlow parolingizni yangilash uchun quyidagi havolani oching:\n"
-                    f"{reset_url}\n\n"
-                    "Agar bu so‘rovni siz yubormagan bo‘lsangiz, xabarni e’tiborsiz qoldiring."
-                ),
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[user.email],
+            display_name = user.get_full_name() or user.email
+            text_body = (
+                f"Hello {display_name},\n\n"
+                "We received a request to reset the password for your TaskFlow account. "
+                "Use the following link to set a new password:\n"
+                f"{reset_url}\n\n"
+                "This link will expire in 1 hour.\n\n"
+                "If you did not request a password reset, you can safely ignore this email."
             )
+            html_body = render_to_string("emails/password_reset.html", {
+                "display_name": display_name,
+                "reset_url": reset_url,
+            })
+            email = EmailMultiAlternatives(
+                subject="Reset your TaskFlow password",
+                body=text_body,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                to=[user.email],
+            )
+            email.attach_alternative(html_body, "text/html")
+            logo_path = settings.BASE_DIR / "templates" / "emails" / "assets" / "webster-tashkent-logo.png"
+            with logo_path.open("rb") as logo_file:
+                logo = MIMEImage(logo_file.read(), _subtype="png")
+            logo.add_header("Content-ID", "<webster-logo>")
+            logo.add_header("Content-Disposition", "inline", filename="webster-tashkent-logo.png")
+            email.attach(logo)
+            email.send()
 
         return Response({
-            "detail": "Agar ushbu email mavjud bo‘lsa, parolni tiklash havolasi yuborildi."
+            "detail": "If an account with this email exists, a password reset link has been sent."
         })
 
 

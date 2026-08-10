@@ -23,6 +23,8 @@ All list endpoints support pagination. Tasks, members and events accept `?depart
 | Screen | Endpoint |
 |---|---|
 | Login | `POST /api/v1/auth/token/` |
+| Forgot password | `POST /api/v1/auth/password-reset/` |
+| Reset password | `POST /api/v1/auth/password-reset/confirm/` |
 | Departments | `/api/v1/departments/` |
 | Dashboard | `GET /api/v1/dashboard/` |
 | Tasks | `/api/v1/tasks/` |
