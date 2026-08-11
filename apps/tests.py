@@ -547,6 +547,50 @@ class DepartmentScopedApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertNotIn("workspace", response.data)
 
+    def test_member_search_uses_user_fields(self):
+        self.member.first_name = "Aziza"
+        self.member.last_name = "Karimova"
+        self.member.job_title = "Backend Engineer"
+        self.member.save(update_fields=["first_name", "last_name", "job_title"])
+
+        for term in ("Aziza", "Karimova", "member@example.com", "Backend"):
+            with self.subTest(term=term):
+                response = self.client.get("/api/v1/members/", {"search": term})
+                self.assertEqual(response.status_code, status.HTTP_200_OK)
+                self.assertEqual(response.data["count"], 1)
+                self.assertEqual(response.data["results"][0]["id"], self.member.pk)
+
+    def test_member_filters_and_ordering(self):
+        inactive_admin = User.objects.create_user(
+            username="inactive-admin",
+            email="inactive-admin@example.com",
+            password="pass12345",
+            first_name="Amina",
+            department=self.department,
+            role=User.Role.ADMIN,
+            is_active=False,
+        )
+        self.member.first_name = "Zafar"
+        self.member.save(update_fields=["first_name"])
+        self.owner.first_name = "Owner"
+        self.owner.save(update_fields=["first_name"])
+
+        cases = (
+            ({"department": self.department.pk}, 3),
+            ({"role": User.Role.ADMIN}, 1),
+            ({"is_active": "false"}, 1),
+            ({"department": self.department.pk, "role": User.Role.ADMIN, "is_active": "false"}, 1),
+        )
+        for params, expected_count in cases:
+            with self.subTest(params=params):
+                response = self.client.get("/api/v1/members/", params)
+                self.assertEqual(response.status_code, status.HTTP_200_OK)
+                self.assertEqual(response.data["count"], expected_count)
+
+        response = self.client.get("/api/v1/members/", {"ordering": "first_name"})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["results"][0]["id"], inactive_admin.pk)
+
     def test_analytics_is_scoped_by_department(self):
         Task.objects.create(
             department=self.department,

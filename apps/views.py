@@ -131,8 +131,9 @@ class MemberViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
     serializer_class = MemberSerializer
     filter_backends = (DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter)
     filterset_fields = ("department", "role", "is_active")
-    search_fields = ("user__first_name", "user__last_name", "user__email", "user__job_title")
-    ordering_fields = ("joined_at", "user__first_name")
+    search_fields = ("first_name", "last_name", "email", "job_title")
+    ordering_fields = ("date_joined", "first_name", "last_name", "email", "job_title", "role", "is_active")
+    ordering = ("date_joined",)
 
     manager_roles = (
         User.Role.OWNER,
