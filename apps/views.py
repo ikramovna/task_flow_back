@@ -23,7 +23,8 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from drf_spectacular.utils import extend_schema, inline_serializer
+from drf_spectacular.types import OpenApiTypes
+from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
 
 from .filters import EventFilter, TaskFilter
 from .models import Conversation, ConversationParticipant, Department, Event, Message, Notification, Report, Task, User, UserPreference
@@ -392,11 +393,38 @@ class EventViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
 class AnalyticsView(APIView):
     permission_classes = (IsAuthenticated, IsDepartmentMember)
 
-    @extend_schema(responses=inline_serializer(
-        name="AnalyticsResponse",
-        fields={"meta": serializers.JSONField(), "summary": serializers.JSONField(),
-                "charts": serializers.JSONField(), "overdue": serializers.JSONField()},
-    ))
+    @extend_schema(
+        parameters=[
+            OpenApiParameter("department", OpenApiTypes.UUID, OpenApiParameter.QUERY, required=False,
+                             description="Department UUID. Omit to include every accessible department."),
+            OpenApiParameter("employee", OpenApiTypes.UUID, OpenApiParameter.QUERY, required=False,
+                             description="Employee UUID from the selected accessible department(s)."),
+            OpenApiParameter("priority", OpenApiTypes.STR, OpenApiParameter.QUERY, required=False,
+                             enum=Task.Priority.values),
+            OpenApiParameter("status", OpenApiTypes.STR, OpenApiParameter.QUERY, required=False,
+                             enum=Task.Status.values),
+            OpenApiParameter("days", OpenApiTypes.INT, OpenApiParameter.QUERY, required=False,
+                             enum=[7, 30, 90, 365], default=30,
+                             description="Preset period. Ignored when start_date is supplied."),
+            OpenApiParameter("start_date", OpenApiTypes.DATE, OpenApiParameter.QUERY, required=False,
+                             description="Custom period start (YYYY-MM-DD)."),
+            OpenApiParameter("end_date", OpenApiTypes.DATE, OpenApiParameter.QUERY, required=False,
+                             description="Period end (YYYY-MM-DD); defaults to today."),
+            OpenApiParameter("granularity", OpenApiTypes.STR, OpenApiParameter.QUERY, required=False,
+                             enum=["day", "week", "month"],
+                             description="Trend bucket size; selected automatically when omitted."),
+        ],
+        responses=inline_serializer(
+            name="AnalyticsResponse",
+            fields={"meta": serializers.JSONField(), "summary": serializers.JSONField(),
+                    "charts": serializers.JSONField(), "overdue": serializers.JSONField(),
+                    "task_completion_rate": serializers.FloatField(),
+                    "team_velocity": serializers.IntegerField(),
+                    "overdue_tasks": serializers.IntegerField(),
+                    "monthly_progress": serializers.ListField(),
+                    "tasks_by_category": serializers.ListField()},
+        ),
+    )
     def get(self, request):
         params = request.query_params
         today = timezone.localdate()
