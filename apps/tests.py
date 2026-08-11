@@ -605,6 +605,58 @@ class DepartmentScopedApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["task_completion_rate"], 100)
 
+    def test_analytics_returns_chart_payload_and_applies_filters(self):
+        done = Task.objects.create(
+            department=self.department,
+            title="Done on time",
+            created_by=self.owner,
+            status=Task.Status.COMPLETED,
+            priority=Task.Priority.HIGH,
+            due_date=timezone.localdate(),
+            completed_at=timezone.now(),
+        )
+        done.assignees.add(self.member)
+        overdue = Task.objects.create(
+            department=self.department,
+            title="Overdue high priority",
+            created_by=self.owner,
+            status=Task.Status.IN_PROGRESS,
+            priority=Task.Priority.HIGH,
+            due_date=timezone.localdate() - timedelta(days=3),
+        )
+        overdue.assignees.add(self.member)
+        Task.objects.create(
+            department=self.department,
+            title="Excluded low priority",
+            created_by=self.owner,
+            priority=Task.Priority.LOW,
+        )
+
+        response = self.client.get("/api/v1/analytics/", {
+            "department": self.department.pk,
+            "employee": self.member.pk,
+            "priority": Task.Priority.HIGH,
+            "days": 30,
+            "granularity": "day",
+        })
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["charts"]["task_status"]["total"], 2)
+        self.assertEqual(response.data["summary"]["task_completion_rate"]["value"], 50.0)
+        self.assertEqual(response.data["overdue"]["count"], 1)
+        self.assertEqual(response.data["overdue"]["items"][0]["days_overdue"], 3)
+        self.assertEqual(response.data["overdue"]["items"][0]["assignee"]["id"], str(self.member.pk))
+        self.assertEqual(response.data["meta"]["applied_filters"]["priority"], Task.Priority.HIGH)
+
+    def test_analytics_rejects_invalid_filters(self):
+        response = self.client.get("/api/v1/analytics/", {"priority": "urgent"})
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+        response = self.client.get("/api/v1/analytics/", {
+            "start_date": "2026-08-10", "end_date": "2026-08-01"
+        })
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
     def test_dashboard_returns_english_sections(self):
         self.owner.first_name = "Dashboard"
         self.owner.last_name = "Owner"
