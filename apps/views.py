@@ -725,12 +725,17 @@ class DashboardView(APIView):
             .annotate(task_count=Count("id"))
             .order_by("-task_count", "department__name")
         )
+        department_total = sum(item["task_count"] for item in department_items)
+
+        def department_percent(value):
+            return round(value * 100 / department_total, 1) if department_total else 0.0
+
         tasks_by_department = [
             {
                 "department_id": str(item["department_id"]),
                 "department_name": item["department__name"],
                 "task_count": item["task_count"],
-                "percentage": percent(item["task_count"]),
+                "percentage": department_percent(item["task_count"]),
             }
             for item in department_items
         ]

@@ -398,6 +398,7 @@ class DepartmentScopedApiTests(APITestCase):
         self.assertEqual(owner_dashboard.data["summary"]["total_tasks"]["count"], 2)
         self.assertEqual(restricted_dashboard.data["summary"]["total_tasks"]["count"], 1)
         self.assertEqual(len(restricted_dashboard.data["tasks_by_department"]), 1)
+        self.assertEqual(restricted_dashboard.data["tasks_by_department"][0]["percentage"], 100.0)
         self.assertEqual(
             restricted_dashboard.data["tasks_by_department"][0]["department_id"],
             str(self.department.pk),
