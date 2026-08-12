@@ -639,6 +639,9 @@ class DashboardView(APIView):
     )
     def get(self, request):
         user = request.user
+        # Dashboard counters are organization-wide and must be identical for every user.
+        # Detailed task lists below remain scoped to the requesting user's access.
+        metric_tasks = Task.objects.all()
         all_tasks = Task.objects.select_related("department", "created_by").prefetch_related("assignees")
         events = Event.objects.select_related("department", "created_by").prefetch_related("attendees")
 
@@ -661,7 +664,7 @@ class DashboardView(APIView):
         day_start = timezone.make_aware(datetime.combine(today, time.min))
         day_end = day_start + timedelta(days=1)
 
-        summary = all_tasks.aggregate(
+        summary = metric_tasks.aggregate(
             total=Count("id"),
             archived=Count("id", filter=Q(is_archived=True)),
             completed=Count("id", filter=Q(is_archived=False, status=Task.Status.COMPLETED)),
@@ -717,7 +720,7 @@ class DashboardView(APIView):
             })
 
         department_items = list(
-            tasks.values("department_id", "department__name")
+            metric_tasks.filter(is_archived=False).values("department_id", "department__name")
             .annotate(task_count=Count("id"))
             .order_by("-task_count", "department__name")
         )

@@ -367,8 +367,39 @@ class DepartmentScopedApiTests(APITestCase):
         dashboard = self.client.get("/api/v1/dashboard/")
 
         self.assertEqual(analytics.data["monthly_progress"][0]["created"], 1)
-        self.assertEqual(dashboard.data["summary"]["total_tasks"]["count"], 1)
+        self.assertEqual(dashboard.data["summary"]["total_tasks"]["count"], 2)
         self.assertNotIn(str(hidden.pk), {item["id"] for item in dashboard.data["recent_tasks"]})
+
+    def test_dashboard_metrics_are_the_same_for_users_with_different_access(self):
+        other_department = Department.objects.create(name="Dashboard Other", code="dashboard-other")
+        Task.objects.create(
+            department=self.department,
+            title="Primary department task",
+            created_by=self.owner,
+        )
+        Task.objects.create(
+            department=other_department,
+            title="Other department task",
+            created_by=self.owner,
+        )
+        restricted_user = User.objects.create_user(
+            username="dashboard-restricted",
+            email="dashboard-restricted@example.com",
+            password="pass12345",
+            department=self.department,
+            role=User.Role.MANAGER,
+        )
+
+        self.client.force_authenticate(self.owner)
+        owner_dashboard = self.client.get("/api/v1/dashboard/")
+        self.client.force_authenticate(restricted_user)
+        restricted_dashboard = self.client.get("/api/v1/dashboard/")
+
+        self.assertEqual(owner_dashboard.data["summary"], restricted_dashboard.data["summary"])
+        self.assertEqual(
+            owner_dashboard.data["tasks_by_department"],
+            restricted_dashboard.data["tasks_by_department"],
+        )
 
     def test_privileged_roles_can_assign_task_across_departments(self):
         other_department = Department.objects.create(name="Operations", code="operations-tasks")
