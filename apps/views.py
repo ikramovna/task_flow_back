@@ -639,8 +639,8 @@ class DashboardView(APIView):
     )
     def get(self, request):
         user = request.user
-        # Dashboard counters are organization-wide and must be identical for every user.
-        # Detailed task lists below remain scoped to the requesting user's access.
+        # Privileged roles see organization-wide metrics. Members see only their
+        # own department, while private tasks keep their normal visibility rules.
         metric_tasks = Task.objects.all()
         all_tasks = Task.objects.select_related("department", "created_by").prefetch_related("assignees")
         events = Event.objects.select_related("department", "created_by").prefetch_related("attendees")
@@ -652,11 +652,12 @@ class DashboardView(APIView):
 
         if user.role not in (User.Role.OWNER, User.Role.ADMIN, User.Role.MANAGER):
             all_tasks = all_tasks.filter(department=user.department)
+            metric_tasks = metric_tasks.filter(department=user.department)
             events = events.filter(department=user.department)
-            all_tasks = all_tasks.filter(assignees=user)
             events = events.filter(attendees=user)
 
         all_tasks = visible_tasks_for(all_tasks, user).distinct()
+        metric_tasks = visible_tasks_for(metric_tasks, user).distinct()
         tasks = all_tasks.filter(is_archived=False)
         events = events.distinct()
         today = timezone.localdate()
