@@ -263,10 +263,9 @@ class TaskViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
             return self.queryset
         user = self.request.user
         if user.role in (User.Role.OWNER, User.Role.ADMIN, User.Role.MANAGER):
-            qs = Task.objects.all()
+            qs = self.scope_departments(Task.objects.all())
         else:
-            qs = Task.objects.filter(department=user.department, assignees=user)
-        qs = self.scope_departments(qs)
+            qs = Task.objects.filter(Q(department=user.department) | Q(assignees=user))
         qs = visible_tasks_for(qs, user)
         qs = qs.select_related("department", "created_by", "main_assignee").prefetch_related("assignees").distinct()
         archived = self.request.query_params.get("archived", "").lower()
@@ -651,10 +650,14 @@ class DashboardView(APIView):
             events = events.filter(access_filter)
 
         if user.role not in (User.Role.OWNER, User.Role.ADMIN, User.Role.MANAGER):
-            all_tasks = all_tasks.filter(department=user.department)
-            metric_tasks = metric_tasks.filter(department=user.department)
-            events = events.filter(department=user.department)
-            events = events.filter(attendees=user)
+            member_task_filter = Q(department=user.department) | Q(assignees=user)
+            all_tasks = Task.objects.filter(member_task_filter).select_related(
+                "department", "created_by"
+            ).prefetch_related("assignees")
+            metric_tasks = metric_tasks.filter(member_task_filter)
+            events = Event.objects.filter(
+                Q(department=user.department) | Q(attendees=user)
+            ).select_related("department", "created_by").prefetch_related("attendees")
 
         all_tasks = visible_tasks_for(all_tasks, user).distinct()
         metric_tasks = visible_tasks_for(metric_tasks, user).distinct()

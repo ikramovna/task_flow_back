@@ -370,6 +370,51 @@ class DepartmentScopedApiTests(APITestCase):
         self.assertEqual(dashboard.data["summary"]["total_tasks"]["count"], 1)
         self.assertNotIn(str(hidden.pk), {item["id"] for item in dashboard.data["recent_tasks"]})
 
+    def test_member_sees_department_tasks_and_assigned_hidden_tasks(self):
+        other_department = Department.objects.create(name="Assigned Other", code="assigned-other")
+        department_task = Task.objects.create(
+            department=self.department,
+            title="Department public task",
+            created_by=self.owner,
+        )
+        hidden_department_task = Task.objects.create(
+            department=self.department,
+            title="Department hidden task",
+            created_by=self.owner,
+            is_hidden=True,
+        )
+        assigned_hidden_task = Task.objects.create(
+            department=other_department,
+            title="Assigned hidden task",
+            created_by=self.owner,
+            is_hidden=True,
+        )
+        assigned_hidden_task.assignees.add(self.member)
+        other_public_task = Task.objects.create(
+            department=other_department,
+            title="Other public task",
+            created_by=self.owner,
+        )
+        self.client.force_authenticate(self.member)
+
+        response = self.client.get("/api/v1/tasks/", {"archived": "all"})
+        task_ids = {str(item["id"]) for item in response.data["results"]}
+
+        self.assertIn(str(department_task.pk), task_ids)
+        self.assertIn(str(assigned_hidden_task.pk), task_ids)
+        self.assertNotIn(str(hidden_department_task.pk), task_ids)
+        self.assertNotIn(str(other_public_task.pk), task_ids)
+
+        dashboard = self.client.get("/api/v1/dashboard/")
+        self.assertEqual(dashboard.data["summary"]["total_tasks"]["count"], 2)
+        department_ids = {
+            item["department_id"] for item in dashboard.data["tasks_by_department"]
+        }
+        self.assertEqual(
+            department_ids,
+            {str(self.department.pk), str(other_department.pk)},
+        )
+
     def test_member_dashboard_metrics_are_scoped_to_own_department(self):
         other_department = Department.objects.create(name="Dashboard Other", code="dashboard-other")
         Task.objects.create(
