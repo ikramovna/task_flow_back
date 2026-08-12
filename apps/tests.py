@@ -377,6 +377,13 @@ class DepartmentScopedApiTests(APITestCase):
             title="Department public task",
             created_by=self.owner,
         )
+        second_assignee = User.objects.create_user(
+            username="visibility-second-assignee",
+            email="visibility-second@example.com",
+            password="pass12345",
+            department=self.department,
+        )
+        department_task.assignees.add(self.member, second_assignee)
         hidden_department_task = Task.objects.create(
             department=self.department,
             title="Department hidden task",

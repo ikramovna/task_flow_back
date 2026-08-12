@@ -265,7 +265,10 @@ class TaskViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
         if user.role in (User.Role.OWNER, User.Role.ADMIN, User.Role.MANAGER):
             qs = self.scope_departments(Task.objects.all())
         else:
-            qs = Task.objects.filter(Q(department=user.department) | Q(assignees=user))
+            assigned_task_ids = Task.objects.filter(assignees=user).values("pk")
+            qs = Task.objects.filter(
+                Q(department=user.department) | Q(pk__in=assigned_task_ids)
+            )
         qs = visible_tasks_for(qs, user)
         qs = qs.select_related("department", "created_by", "main_assignee").prefetch_related("assignees").distinct()
         archived = self.request.query_params.get("archived", "").lower()
@@ -650,7 +653,8 @@ class DashboardView(APIView):
             events = events.filter(access_filter)
 
         if user.role not in (User.Role.OWNER, User.Role.ADMIN, User.Role.MANAGER):
-            member_task_filter = Q(department=user.department) | Q(assignees=user)
+            assigned_task_ids = Task.objects.filter(assignees=user).values("pk")
+            member_task_filter = Q(department=user.department) | Q(pk__in=assigned_task_ids)
             all_tasks = Task.objects.filter(member_task_filter).select_related(
                 "department", "created_by"
             ).prefetch_related("assignees")
@@ -669,16 +673,17 @@ class DashboardView(APIView):
         day_end = day_start + timedelta(days=1)
 
         summary = metric_tasks.aggregate(
-            total=Count("id"),
-            archived=Count("id", filter=Q(is_archived=True)),
-            completed=Count("id", filter=Q(is_archived=False, status=Task.Status.COMPLETED)),
-            in_progress=Count("id", filter=Q(is_archived=False, status=Task.Status.IN_PROGRESS)),
-            not_started=Count("id", filter=Q(is_archived=False, status=Task.Status.NOT_STARTED)),
-            backlog=Count("id", filter=Q(is_archived=False, status=Task.Status.BACKLOG)),
-            on_hold=Count("id", filter=Q(is_archived=False, status=Task.Status.ON_HOLD)),
+            total=Count("id", distinct=True),
+            archived=Count("id", filter=Q(is_archived=True), distinct=True),
+            completed=Count("id", filter=Q(is_archived=False, status=Task.Status.COMPLETED), distinct=True),
+            in_progress=Count("id", filter=Q(is_archived=False, status=Task.Status.IN_PROGRESS), distinct=True),
+            not_started=Count("id", filter=Q(is_archived=False, status=Task.Status.NOT_STARTED), distinct=True),
+            backlog=Count("id", filter=Q(is_archived=False, status=Task.Status.BACKLOG), distinct=True),
+            on_hold=Count("id", filter=Q(is_archived=False, status=Task.Status.ON_HOLD), distinct=True),
             overdue=Count(
                 "id",
                 filter=Q(is_archived=False, due_date__lt=today) & ~Q(status=Task.Status.COMPLETED),
+                distinct=True,
             ),
         )
         total = summary["total"]
@@ -725,7 +730,7 @@ class DashboardView(APIView):
 
         department_items = list(
             metric_tasks.filter(is_archived=False).values("department_id", "department__name")
-            .annotate(task_count=Count("id"))
+            .annotate(task_count=Count("id", distinct=True))
             .order_by("-task_count", "department__name")
         )
         department_total = sum(item["task_count"] for item in department_items)
