@@ -641,14 +641,17 @@ class DashboardView(APIView):
     )
     def get(self, request):
         user = request.user
-        # Privileged roles see organization-wide metrics. Members see only their
-        # own department, while private tasks keep their normal visibility rules.
+        # Owners see organization-wide data. Every other role is restricted to
+        # explicitly assigned departments; members additionally keep their
+        # assignee-based task visibility below.
         metric_tasks = Task.objects.all()
         all_tasks = Task.objects.select_related("department", "created_by").prefetch_related("assignees")
         events = Event.objects.select_related("department", "created_by").prefetch_related("attendees")
 
-        if not user.is_superuser and not user.has_all_departments_access:
+        has_organization_access = user.is_superuser or user.role == User.Role.OWNER
+        if not has_organization_access:
             access_filter = Q(department_id=user.department_id) | Q(department__users_with_access=user)
+            metric_tasks = metric_tasks.filter(access_filter)
             all_tasks = all_tasks.filter(access_filter)
             events = events.filter(access_filter)
 

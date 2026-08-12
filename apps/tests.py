@@ -456,6 +456,57 @@ class DepartmentScopedApiTests(APITestCase):
             str(self.department.pk),
         )
 
+    def test_dashboard_department_scope_depends_on_role_and_assignments(self):
+        assigned_department = Department.objects.create(
+            name="Dashboard Assigned", code="dashboard-assigned"
+        )
+        unassigned_department = Department.objects.create(
+            name="Dashboard Unassigned", code="dashboard-unassigned"
+        )
+        for department in (self.department, assigned_department, unassigned_department):
+            Task.objects.create(
+                department=department,
+                title=f"{department.name} task",
+                created_by=self.owner,
+            )
+
+        for role in (User.Role.ADMIN, User.Role.MANAGER):
+            with self.subTest(role=role):
+                requester = User.objects.create_user(
+                    username=f"dashboard-{role}",
+                    email=f"dashboard-{role}@example.com",
+                    password="pass12345",
+                    department=self.department,
+                    role=role,
+                    has_all_departments_access=True,
+                )
+                requester.accessible_departments.add(assigned_department)
+                self.client.force_authenticate(requester)
+
+                response = self.client.get("/api/v1/dashboard/")
+
+                self.assertEqual(response.data["summary"]["total_tasks"]["count"], 2)
+                self.assertEqual(
+                    {item["department_id"] for item in response.data["tasks_by_department"]},
+                    {str(self.department.pk), str(assigned_department.pk)},
+                )
+
+        self.owner.has_all_departments_access = False
+        self.owner.save(update_fields=["has_all_departments_access"])
+        self.client.force_authenticate(self.owner)
+
+        owner_response = self.client.get("/api/v1/dashboard/")
+
+        self.assertEqual(owner_response.data["summary"]["total_tasks"]["count"], 3)
+        self.assertEqual(
+            {item["department_id"] for item in owner_response.data["tasks_by_department"]},
+            {
+                str(self.department.pk),
+                str(assigned_department.pk),
+                str(unassigned_department.pk),
+            },
+        )
+
     def test_privileged_roles_can_assign_task_across_departments(self):
         other_department = Department.objects.create(name="Operations", code="operations-tasks")
         outsider = User.objects.create_user(
