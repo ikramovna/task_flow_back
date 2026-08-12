@@ -1,5 +1,6 @@
 import csv
 import io
+import secrets
 from datetime import date, datetime, time, timedelta
 from email.mime.image import MIMEImage
 
@@ -27,12 +28,13 @@ from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
 
 from .filters import EventFilter, TaskFilter
-from .models import Conversation, ConversationParticipant, Department, Event, Message, Notification, Report, Task, User, UserPreference
+from .models import Conversation, ConversationParticipant, Department, Event, Message, Notification, Report, Task, TelegramIntegration, User, UserPreference
 from .notifications import notify_new_message, notify_task_assigned, notify_task_completed
 from .pagination import StandardPagination
 from .permissions import IsDepartmentMember
 from .serializers import AccountDeleteSerializer, ConversationSerializer, DepartmentSerializer, EventSerializer, MemberSerializer, MessageSerializer, NotificationSerializer, PasswordChangeSerializer, PasswordResetConfirmSerializer, PasswordResetRequestSerializer, ProfileSerializer, ReportSerializer, SupportBotMessageSerializer, TaskCreatorSerializer, TaskSerializer, TwoFactorSerializer, UserBriefSerializer, UserPreferenceSerializer
 from .telegram_support import TelegramSupportError, send_support_message
+from .telegram import TelegramError, bot_api, webhook_url
 from .task_visibility import PRIVILEGED_TASK_ROLES, visible_tasks_for
 
 
@@ -637,40 +639,43 @@ class DashboardView(APIView):
     )
     def get(self, request):
         user = request.user
-        tasks = Task.objects.filter(is_archived=False).select_related("department", "created_by").prefetch_related("assignees")
+        all_tasks = Task.objects.select_related("department", "created_by").prefetch_related("assignees")
         events = Event.objects.select_related("department", "created_by").prefetch_related("attendees")
 
         if not user.is_superuser and not user.has_all_departments_access:
             access_filter = Q(department_id=user.department_id) | Q(department__users_with_access=user)
-            tasks = tasks.filter(access_filter)
+            all_tasks = all_tasks.filter(access_filter)
             events = events.filter(access_filter)
 
         if user.role not in (User.Role.OWNER, User.Role.ADMIN, User.Role.MANAGER):
-            tasks = tasks.filter(department=user.department)
+            all_tasks = all_tasks.filter(department=user.department)
             events = events.filter(department=user.department)
-            tasks = tasks.filter(assignees=user)
+            all_tasks = all_tasks.filter(assignees=user)
             events = events.filter(attendees=user)
 
-        tasks = visible_tasks_for(tasks, user).distinct()
+        all_tasks = visible_tasks_for(all_tasks, user).distinct()
+        tasks = all_tasks.filter(is_archived=False)
         events = events.distinct()
         today = timezone.localdate()
         now = timezone.now()
         day_start = timezone.make_aware(datetime.combine(today, time.min))
         day_end = day_start + timedelta(days=1)
 
-        summary = tasks.aggregate(
+        summary = all_tasks.aggregate(
             total=Count("id"),
-            completed=Count("id", filter=Q(status=Task.Status.COMPLETED)),
-            in_progress=Count("id", filter=Q(status=Task.Status.IN_PROGRESS)),
-            not_started=Count("id", filter=Q(status=Task.Status.NOT_STARTED)),
-            backlog=Count("id", filter=Q(status=Task.Status.BACKLOG)),
-            on_hold=Count("id", filter=Q(status=Task.Status.ON_HOLD)),
+            archived=Count("id", filter=Q(is_archived=True)),
+            completed=Count("id", filter=Q(is_archived=False, status=Task.Status.COMPLETED)),
+            in_progress=Count("id", filter=Q(is_archived=False, status=Task.Status.IN_PROGRESS)),
+            not_started=Count("id", filter=Q(is_archived=False, status=Task.Status.NOT_STARTED)),
+            backlog=Count("id", filter=Q(is_archived=False, status=Task.Status.BACKLOG)),
+            on_hold=Count("id", filter=Q(is_archived=False, status=Task.Status.ON_HOLD)),
             overdue=Count(
                 "id",
-                filter=Q(due_date__lt=today) & ~Q(status=Task.Status.COMPLETED),
+                filter=Q(is_archived=False, due_date__lt=today) & ~Q(status=Task.Status.COMPLETED),
             ),
         )
         total = summary["total"]
+        archived = summary["archived"]
         completed = summary["completed"]
         in_progress = summary["in_progress"]
         not_started = summary["not_started"]
@@ -745,6 +750,7 @@ class DashboardView(APIView):
         return Response({
             "summary": {
                 "total_tasks": {"count": total, "percentage": 100.0 if total else 0.0},
+                "archived_tasks": {"count": archived, "percentage": percent(archived)},
                 "completed_tasks": {"count": completed, "percentage": percent(completed)},
                 "in_progress_tasks": {"count": in_progress, "percentage": percent(in_progress)},
                 "not_started_tasks": {"count": not_started, "percentage": percent(not_started)},
@@ -971,6 +977,125 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
     def mark_all_read(self, request):
         updated = self.get_queryset().filter(read_at__isnull=True).update(read_at=timezone.now())
         return Response({"updated": updated})
+
+
+class TelegramIntegrationView(APIView):
+    permission_classes = (IsAuthenticated,)
+
+    def get(self, request):
+        integration = TelegramIntegration.objects.filter(user=request.user).first()
+        return Response({
+            "is_connected": bool(integration and integration.is_connected),
+            "telegram_username": integration.telegram_username if integration else "",
+            "notifications_enabled": integration.notifications_enabled if integration else True,
+            "connected_at": integration.connected_at if integration else None,
+        })
+
+    def post(self, request):
+        if not settings.TELEGRAM_BOT_USERNAME:
+            return Response(
+                {"detail": "Telegram bot is not configured."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+        integration, _ = TelegramIntegration.objects.get_or_create(user=request.user)
+        integration.link_token = secrets.token_urlsafe(32)
+        integration.link_token_expires_at = timezone.now() + timedelta(minutes=15)
+        integration.save(update_fields=["link_token", "link_token_expires_at", "updated_at"])
+        return Response({
+            "connect_url": f"https://t.me/{settings.TELEGRAM_BOT_USERNAME.lstrip('@')}?start={integration.link_token}",
+            "expires_at": integration.link_token_expires_at,
+        })
+
+    def patch(self, request):
+        integration = TelegramIntegration.objects.filter(user=request.user).first()
+        if not integration:
+            return Response({"detail": "Telegram is not connected."}, status=status.HTTP_404_NOT_FOUND)
+        if "notifications_enabled" not in request.data:
+            return Response({"notifications_enabled": "This field is required."}, status=status.HTTP_400_BAD_REQUEST)
+        value = request.data["notifications_enabled"]
+        if not isinstance(value, bool):
+            return Response({"notifications_enabled": "Must be a boolean."}, status=status.HTTP_400_BAD_REQUEST)
+        integration.notifications_enabled = value
+        integration.save(update_fields=["notifications_enabled", "updated_at"])
+        return Response({"notifications_enabled": integration.notifications_enabled})
+
+    def delete(self, request):
+        integration = TelegramIntegration.objects.filter(user=request.user).first()
+        if integration:
+            integration.telegram_user_id = None
+            integration.telegram_chat_id = None
+            integration.telegram_username = ""
+            integration.link_token = None
+            integration.link_token_expires_at = None
+            integration.is_connected = False
+            integration.connected_at = None
+            integration.save()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class TelegramWebhookView(APIView):
+    authentication_classes = ()
+    permission_classes = (AllowAny,)
+
+    def post(self, request):
+        expected = settings.TELEGRAM_WEBHOOK_SECRET
+        supplied = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+        if not expected or not secrets.compare_digest(supplied, expected):
+            return Response(status=status.HTTP_403_FORBIDDEN)
+
+        message = request.data.get("message") or {}
+        text = message.get("text", "")
+        chat = message.get("chat") or {}
+        sender = message.get("from") or {}
+        chat_id = chat.get("id")
+        if not chat_id:
+            return Response({"ok": True})
+
+        if text.startswith("/start "):
+            token = text.split(maxsplit=1)[1].strip()
+            integration = TelegramIntegration.objects.filter(
+                link_token=token,
+                link_token_expires_at__gt=timezone.now(),
+            ).first()
+            if not integration:
+                bot_api("sendMessage", chat_id=chat_id, text="This connection link is invalid or expired.")
+                return Response({"ok": True})
+            conflict = TelegramIntegration.objects.filter(telegram_user_id=sender.get("id")).exclude(pk=integration.pk)
+            if conflict.exists():
+                bot_api("sendMessage", chat_id=chat_id, text="This Telegram account is already connected.")
+                return Response({"ok": True})
+            integration.telegram_user_id = sender.get("id")
+            integration.telegram_chat_id = chat_id
+            integration.telegram_username = sender.get("username", "")
+            integration.is_connected = True
+            integration.connected_at = timezone.now()
+            integration.link_token = None
+            integration.link_token_expires_at = None
+            integration.save()
+            bot_api("sendMessage", chat_id=chat_id, text="✅ Telegram successfully connected to TaskFlow.")
+        elif text.startswith("/start"):
+            bot_api("sendMessage", chat_id=chat_id, text="Open TaskFlow → Profile → Connect Telegram first.")
+        return Response({"ok": True})
+
+
+class TelegramWebhookSetupView(APIView):
+    permission_classes = (IsAuthenticated,)
+
+    def post(self, request):
+        if not request.user.is_superuser:
+            raise PermissionDenied("Only a superuser can configure the Telegram webhook.")
+        if not settings.TELEGRAM_WEBHOOK_SECRET:
+            return Response({"detail": "TELEGRAM_WEBHOOK_SECRET is not configured."}, status=503)
+        try:
+            result = bot_api(
+                "setWebhook",
+                url=webhook_url(request),
+                secret_token=settings.TELEGRAM_WEBHOOK_SECRET,
+                allowed_updates='["message"]',
+            )
+        except TelegramError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+        return Response({"ok": bool(result), "url": webhook_url(request)})
 
 
 class ReportViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):

@@ -2,7 +2,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
-from .views import AccountDeleteView, AnalyticsView, ConversationViewSet, DashboardView, DepartmentViewSet, EventViewSet, MemberViewSet, MessageViewSet, NotificationViewSet, PasswordChangeView, PasswordResetConfirmView, PasswordResetRequestView, PreferenceView, ProfileView, ReportViewSet, SupportBotView, TaskViewSet, TwoFactorView
+from .views import AccountDeleteView, AnalyticsView, ConversationViewSet, DashboardView, DepartmentViewSet, EventViewSet, MemberViewSet, MessageViewSet, NotificationViewSet, PasswordChangeView, PasswordResetConfirmView, PasswordResetRequestView, PreferenceView, ProfileView, ReportViewSet, SupportBotView, TaskViewSet, TelegramIntegrationView, TelegramWebhookSetupView, TelegramWebhookView, TwoFactorView
 
 router = DefaultRouter()
 router.register("departments", DepartmentViewSet, basename="department")
@@ -27,5 +27,8 @@ urlpatterns = [
     path("analytics/", AnalyticsView.as_view(), name="analytics"),
     path("dashboard/", DashboardView.as_view(), name="dashboard"),
     path("support/bot/", SupportBotView.as_view(), name="support-bot"),
+    path("me/telegram/", TelegramIntegrationView.as_view(), name="telegram-integration"),
+    path("telegram/webhook/", TelegramWebhookView.as_view(), name="telegram-webhook"),
+    path("telegram/setup-webhook/", TelegramWebhookSetupView.as_view(), name="telegram-setup-webhook"),
     path("", include(router.urls)),
 ]

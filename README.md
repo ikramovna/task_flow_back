@@ -49,3 +49,22 @@ Statuses use API-safe values: `not_started`, `in_progress`, `completed`, `at_ris
 Use `GET /api/v1/notifications/?unread=true` for unread items, `GET /api/v1/notifications/unread_count/` for the bell counter, `POST /api/v1/notifications/<id>/mark_read/`, and `POST /api/v1/notifications/mark_all_read/`.
 
 Run `python manage.py generate_notifications` daily (cron or Task Scheduler) to create deadline reminders and overdue notifications. The command is idempotent and respects each user's notification preferences.
+
+## Telegram integration
+
+Create one bot with BotFather and configure these environment variables:
+
+```env
+TELEGRAM_BOT_TOKEN=123456:replace-with-botfather-token
+TELEGRAM_BOT_USERNAME=TaskFlowBot
+TELEGRAM_WEBHOOK_SECRET=replace-with-a-long-random-secret
+FRONTEND_URL=https://taskflow.example.com
+```
+
+After deploying to a public HTTPS address, a superuser can register the webhook once with `POST /api/v1/telegram/setup-webhook/`. The user-facing flow is:
+
+1. `POST /api/v1/me/telegram/` returns a 15-minute `connect_url`.
+2. Open the URL and press **Start** in Telegram.
+3. `GET /api/v1/me/telegram/` confirms the connection.
+
+Use `PATCH /api/v1/me/telegram/` with `{"notifications_enabled": false}` to mute Telegram, or `DELETE /api/v1/me/telegram/` to disconnect. New assignments, deadline reminders, and overdue notifications are sent through the existing notification service.

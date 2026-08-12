@@ -10,7 +10,7 @@ from django.utils.http import urlsafe_base64_encode
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from .models import Conversation, ConversationParticipant, Department, Event, Message, Notification, Task, User, UserPreference
+from .models import Conversation, ConversationParticipant, Department, Event, Message, Notification, Task, TelegramIntegration, User, UserPreference
 from .notifications import generate_deadline_notifications
 
 
@@ -65,6 +65,56 @@ class PasswordResetApiTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(mail.outbox), 0)
+
+
+@override_settings(
+    TELEGRAM_BOT_USERNAME="TaskFlowTestBot",
+    TELEGRAM_BOT_TOKEN="test-token",
+    TELEGRAM_WEBHOOK_SECRET="test-secret",
+)
+class TelegramIntegrationApiTests(APITestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(
+            username="telegram-user", email="telegram@example.com", password="pass12345"
+        )
+
+    def test_authenticated_user_gets_one_time_connect_link(self):
+        self.client.force_authenticate(self.user)
+        response = self.client.post("/api/v1/me/telegram/", {}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn("https://t.me/TaskFlowTestBot?start=", response.data["connect_url"])
+        integration = TelegramIntegration.objects.get(user=self.user)
+        self.assertIsNotNone(integration.link_token)
+        self.assertGreater(integration.link_token_expires_at, timezone.now())
+
+    @patch("apps.views.bot_api")
+    def test_start_payload_connects_telegram_account(self, mocked_bot_api):
+        integration = TelegramIntegration.objects.create(
+            user=self.user,
+            link_token="one-time-token",
+            link_token_expires_at=timezone.now() + timedelta(minutes=15),
+        )
+        response = self.client.post(
+            "/api/v1/telegram/webhook/",
+            {"message": {"text": "/start one-time-token", "chat": {"id": 987}, "from": {"id": 654, "username": "tester"}}},
+            format="json",
+            HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="test-secret",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        integration.refresh_from_db()
+        self.assertTrue(integration.is_connected)
+        self.assertEqual(integration.telegram_user_id, 654)
+        self.assertIsNone(integration.link_token)
+        mocked_bot_api.assert_called_once()
+
+    def test_webhook_rejects_invalid_secret(self):
+        response = self.client.post(
+            "/api/v1/telegram/webhook/", {"message": {}}, format="json",
+            HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="wrong-secret",
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
 
 
 class DepartmentScopedApiTests(APITestCase):
@@ -680,6 +730,13 @@ class DepartmentScopedApiTests(APITestCase):
             created_by=self.owner,
             status=Task.Status.ON_HOLD,
         )
+        Task.objects.create(
+            department=self.department,
+            title="Archived task",
+            created_by=self.owner,
+            status=Task.Status.COMPLETED,
+            is_archived=True,
+        )
         starts_at = timezone.now() + timedelta(hours=1)
         Event.objects.create(
             department=self.department,
@@ -701,6 +758,9 @@ class DepartmentScopedApiTests(APITestCase):
         self.assertEqual(response.data["summary"]["in_progress_tasks"]["count"], 1)
         self.assertEqual(response.data["summary"]["backlog_tasks"]["count"], 1)
         self.assertEqual(response.data["summary"]["on_hold_tasks"]["count"], 1)
+        self.assertEqual(response.data["summary"]["total_tasks"]["count"], 4)
+        self.assertEqual(response.data["summary"]["archived_tasks"]["count"], 1)
+        self.assertEqual(response.data["summary"]["archived_tasks"]["percentage"], 25.0)
         creator = response.data["recent_tasks"][0]["created_by_detail"]
         self.assertEqual(set(creator), {"id", "full_name", "avatar"})
         self.assertEqual(creator["full_name"], "Dashboard Owner")

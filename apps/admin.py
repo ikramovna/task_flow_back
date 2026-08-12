@@ -3,7 +3,7 @@ from django.contrib.auth.admin import UserAdmin
 from import_export.admin import ImportExportMixin, ImportExportModelAdmin
 
 from .forms import EventAdminForm
-from .models import Conversation, ConversationParticipant, Department, Event, Message, Notification, Report, Task, User, UserPreference
+from .models import Conversation, ConversationParticipant, Department, Event, Message, Notification, Report, Task, TelegramIntegration, User, UserPreference
 from .resources import (
     ConversationParticipantResource,
     ConversationResource,
@@ -64,6 +64,14 @@ class NotificationAdmin(admin.ModelAdmin):
     search_fields = ("recipient__email", "title", "body")
     autocomplete_fields = ("recipient", "actor", "task", "message")
     readonly_fields = ("created_at", "updated_at")
+
+
+@admin.register(TelegramIntegration)
+class TelegramIntegrationAdmin(admin.ModelAdmin):
+    list_display = ("user", "telegram_username", "telegram_user_id", "is_connected", "notifications_enabled", "connected_at")
+    list_filter = ("is_connected", "notifications_enabled")
+    search_fields = ("user__email", "telegram_username", "telegram_user_id")
+    readonly_fields = ("telegram_user_id", "telegram_chat_id", "telegram_username", "connected_at", "created_at", "updated_at")
 
 
 @admin.register(Event)

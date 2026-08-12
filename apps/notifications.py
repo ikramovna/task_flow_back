@@ -1,3 +1,4 @@
+from django.db import transaction
 from django.utils import timezone
 
 from .models import Notification, Task, UserPreference
@@ -20,11 +21,22 @@ def create_notification(*, recipient, notification_type, title, body="", actor=N
         "message": message,
     }
     if event_key:
-        notification, _ = Notification.objects.get_or_create(
+        notification, was_created = Notification.objects.get_or_create(
             recipient=recipient, event_key=event_key, defaults=values
         )
+        if was_created:
+            transaction.on_commit(lambda: _send_telegram(notification.pk))
         return notification
-    return Notification.objects.create(recipient=recipient, **values)
+    notification = Notification.objects.create(recipient=recipient, **values)
+    transaction.on_commit(lambda: _send_telegram(notification.pk))
+    return notification
+
+
+def _send_telegram(notification_id):
+    from .telegram import send_notification
+
+    notification = Notification.objects.select_related("recipient", "actor", "task").get(pk=notification_id)
+    send_notification(notification)
 
 
 def notify_task_assigned(task, actor, recipients):

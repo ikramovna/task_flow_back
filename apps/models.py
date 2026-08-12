@@ -230,6 +230,21 @@ class Notification(TimeStampedModel):
         indexes = [models.Index(fields=("recipient", "read_at", "created_at"))]
 
 
+class TelegramIntegration(TimeStampedModel):
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="telegram_integration")
+    telegram_user_id = models.BigIntegerField(unique=True, null=True, blank=True)
+    telegram_chat_id = models.BigIntegerField(unique=True, null=True, blank=True)
+    telegram_username = models.CharField(max_length=255, blank=True)
+    link_token = models.CharField(max_length=128, unique=True, null=True, blank=True)
+    link_token_expires_at = models.DateTimeField(null=True, blank=True)
+    is_connected = models.BooleanField(default=False)
+    notifications_enabled = models.BooleanField(default=True)
+    connected_at = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return f"Telegram: {self.user.email}"
+
+
 class Report(TimeStampedModel):
     class Type(models.TextChoices):
         WEEKLY_PROGRESS = "weekly_progress", "Weekly Progress"
