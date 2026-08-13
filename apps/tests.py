@@ -545,8 +545,14 @@ class DepartmentScopedApiTests(APITestCase):
                     .exists()
                 )
 
-    def test_manager_access_is_limited_to_selected_departments(self):
+    def test_manager_can_create_task_in_any_department(self):
         other_department = Department.objects.create(name="Finance", code="finance")
+        other_member = User.objects.create_user(
+            username="finance-member",
+            email="finance-member@example.com",
+            password="pass12345",
+            department=other_department,
+        )
         manager = User.objects.create_user(
             username="manager",
             email="manager@example.com",
@@ -558,23 +564,40 @@ class DepartmentScopedApiTests(APITestCase):
 
         response = self.client.post(
             "/api/v1/tasks/",
-            {"department": other_department.pk, "title": "Prepare budget"},
-            format="json",
-        )
-
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertEqual(self.client.get("/api/v1/departments/").data["count"], 1)
-
-        manager.accessible_departments.add(other_department)
-        response = self.client.post(
-            "/api/v1/tasks/",
-            {"department": other_department.pk, "title": "Prepare budget"},
+            {
+                "department": other_department.pk,
+                "title": "Prepare budget",
+                "assignees": [other_member.pk],
+            },
             format="json",
         )
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(str(response.data["department"]), str(other_department.pk))
-        self.assertEqual(self.client.get("/api/v1/departments/").data["count"], 2)
+        self.assertTrue(
+            Task.objects.get(pk=response.data["id"])
+            .assignees.filter(pk=other_member.pk)
+            .exists()
+        )
+        self.assertEqual(self.client.get("/api/v1/departments/").data["count"], 1)
+        self.assertEqual(self.client.get("/api/v1/members/").data["count"], 3)
+        task_list = self.client.get("/api/v1/tasks/")
+        self.assertEqual(task_list.data["count"], 1)
+        visible_task = task_list.data["results"][0]
+        self.assertEqual(str(visible_task["created_by"]), str(manager.pk))
+        self.assertEqual(
+            str(visible_task["assignee_details"][0]["id"]),
+            str(other_member.pk),
+        )
+
+        detail_response = self.client.get(
+            f"/api/v1/tasks/{response.data['id']}/"
+        )
+        self.assertEqual(detail_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            str(detail_response.data["created_by_detail"]["id"]),
+            str(manager.pk),
+        )
 
     def test_owner_and_manager_with_all_department_access_need_no_primary_department(self):
         target_department = Department.objects.create(name="Strategy", code="strategy")

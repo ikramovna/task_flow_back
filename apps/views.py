@@ -253,6 +253,9 @@ class DepartmentViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
 class TaskViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
     queryset = Task.objects.none()
     serializer_class = TaskSerializer
+    # Creation permissions are checked in perform_create so managers can assign
+    # tasks outside their normal department scope. Reads remain queryset-scoped.
+    permission_classes = (IsAuthenticated,)
     filter_backends = (DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter)
     filterset_class = TaskFilter
     search_fields = ("title", "description", "department__name")
@@ -262,7 +265,14 @@ class TaskViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
         if getattr(self, "swagger_fake_view", False):
             return self.queryset
         user = self.request.user
-        if user.role in (User.Role.OWNER, User.Role.ADMIN, User.Role.MANAGER):
+        if user.role == User.Role.MANAGER:
+            department_task_ids = self.scope_departments(
+                Task.objects.all()
+            ).values("pk")
+            qs = Task.objects.filter(
+                Q(pk__in=department_task_ids) | Q(created_by=user)
+            )
+        elif user.role in (User.Role.OWNER, User.Role.ADMIN):
             qs = self.scope_departments(Task.objects.all())
         else:
             assigned_task_ids = Task.objects.filter(assignees=user).values("pk")
@@ -299,7 +309,10 @@ class TaskViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
         can_manage = (
             user.is_active
             and user.role in (User.Role.OWNER, User.Role.ADMIN, User.Role.MANAGER)
-            and user.can_access_department(department)
+            and (
+                user.role == User.Role.MANAGER
+                or user.can_access_department(department)
+            )
         )
         if not can_manage:
             raise PermissionDenied(
