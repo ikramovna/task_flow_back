@@ -132,7 +132,11 @@ class TaskSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"assignees": "Every assignee must be active."})
             if (
                 user.department_id != department.id
-                and requester.role != User.Role.MANAGER
+                and requester.role not in (
+                    User.Role.OWNER,
+                    User.Role.ADMIN,
+                    User.Role.MANAGER,
+                )
                 and not requester.can_access_department(user.department_id)
             ):
                 raise serializers.ValidationError({"assignees": "Every assignee must belong to the task department."})

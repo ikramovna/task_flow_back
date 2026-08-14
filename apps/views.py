@@ -265,15 +265,13 @@ class TaskViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
         if getattr(self, "swagger_fake_view", False):
             return self.queryset
         user = self.request.user
-        if user.role == User.Role.MANAGER:
+        if user.role in PRIVILEGED_TASK_ROLES:
             department_task_ids = self.scope_departments(
                 Task.objects.all()
             ).values("pk")
             qs = Task.objects.filter(
                 Q(pk__in=department_task_ids) | Q(created_by=user)
             )
-        elif user.role in (User.Role.OWNER, User.Role.ADMIN):
-            qs = self.scope_departments(Task.objects.all())
         else:
             assigned_task_ids = Task.objects.filter(assignees=user).values("pk")
             qs = Task.objects.filter(
@@ -304,15 +302,53 @@ class TaskViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
         task = serializer.save(created_by=self.request.user)
         notify_task_assigned(task, self.request.user, task.assignees.all())
 
+    @action(detail=False, methods=["get"], url_path="assignees")
+    def assignees(self, request):
+        """Search company-wide assignees exclusively for task assignment."""
+        user = request.user
+        if not (
+            user.is_active
+            and (
+                user.is_superuser
+                or user.role in (User.Role.OWNER, User.Role.ADMIN, User.Role.MANAGER)
+            )
+        ):
+            raise PermissionDenied(
+                "Only an Owner, Admin, or Manager can search task assignees."
+            )
+
+        search = request.query_params.get("search", "").strip()
+        queryset = User.objects.none()
+        if search:
+            queryset = (
+                User.objects.filter(is_active=True, department__isnull=False)
+                .filter(
+                    Q(first_name__icontains=search)
+                    | Q(last_name__icontains=search)
+                    | Q(email__icontains=search)
+                    | Q(job_title__icontains=search)
+                    | Q(department__name__icontains=search)
+                )
+                .select_related("department")
+                .order_by("first_name", "last_name", "email")
+                .distinct()
+            )
+
+        page = self.paginate_queryset(queryset)
+        serializer = UserBriefSerializer(
+            page if page is not None else queryset,
+            many=True,
+            context=self.get_serializer_context(),
+        )
+        if page is not None:
+            return self.get_paginated_response(serializer.data)
+        return Response(serializer.data)
+
     def ensure_department_task_manager(self, department):
         user = self.request.user
         can_manage = (
             user.is_active
             and user.role in (User.Role.OWNER, User.Role.ADMIN, User.Role.MANAGER)
-            and (
-                user.role == User.Role.MANAGER
-                or user.can_access_department(department)
-            )
         )
         if not can_manage:
             raise PermissionDenied(
@@ -326,10 +362,12 @@ class TaskViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
         task = serializer.instance
         target_department = serializer.validated_data.get("department", task.department)
         user = self.request.user
-        if not user.is_active or not user.can_access_department(target_department):
+        is_manager = user.role in PRIVILEGED_TASK_ROLES
+        if not user.is_active or (
+            not is_manager and not user.can_access_department(target_department)
+        ):
             raise PermissionDenied("You are not a member of this department.")
 
-        is_manager = user.role in (User.Role.OWNER, User.Role.ADMIN, User.Role.MANAGER)
         changed_fields = set(serializer.validated_data)
         member_fields = {"status", "progress"}
         if changed_fields & member_fields and task.main_assignee_id != user.pk:

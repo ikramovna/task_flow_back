@@ -527,7 +527,6 @@ class DepartmentScopedApiTests(APITestCase):
 
         for role, requester in users_by_role.items():
             with self.subTest(role=role):
-                requester.accessible_departments.add(other_department)
                 self.client.force_authenticate(requester)
                 response = self.client.post(
                     "/api/v1/tasks/",
@@ -544,6 +543,45 @@ class DepartmentScopedApiTests(APITestCase):
                     .assignees.filter(pk=outsider.pk)
                     .exists()
                 )
+                detail_response = self.client.get(
+                    f"/api/v1/tasks/{response.data['id']}/"
+                )
+                self.assertEqual(detail_response.status_code, status.HTTP_200_OK)
+
+    def test_task_assignee_search_is_company_wide_and_requires_search_text(self):
+        other_department = Department.objects.create(
+            name="Admissions", code="admissions-task-search"
+        )
+        outsider = User.objects.create_user(
+            username="admissions-assignee",
+            email="admissions-assignee@example.com",
+            password="pass12345",
+            first_name="Aziza",
+            department=other_department,
+        )
+        admin = User.objects.create_user(
+            username="task-search-admin",
+            email="task-search-admin@example.com",
+            password="pass12345",
+            department=self.department,
+            role=User.Role.ADMIN,
+        )
+        self.client.force_authenticate(admin)
+
+        empty_response = self.client.get("/api/v1/tasks/assignees/")
+        search_response = self.client.get(
+            "/api/v1/tasks/assignees/", {"search": "Aziza"}
+        )
+
+        self.assertEqual(empty_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(empty_response.data["count"], 0)
+        self.assertEqual(search_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(search_response.data["count"], 1)
+        self.assertEqual(str(search_response.data["results"][0]["id"]), str(outsider.pk))
+        self.assertEqual(
+            str(search_response.data["results"][0]["department"]),
+            str(other_department.pk),
+        )
 
     def test_manager_can_create_task_in_any_department(self):
         other_department = Department.objects.create(name="Finance", code="finance")
