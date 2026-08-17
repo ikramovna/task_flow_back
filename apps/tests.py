@@ -982,6 +982,49 @@ class DepartmentScopedApiTests(APITestCase):
         self.assertEqual(averages[str(self.member.pk)], 0.5)
         self.assertEqual(averages[str(second_member.pk)], 1.5)
 
+    def test_completed_status_synchronizes_completion_fields_for_every_save_path(self):
+        task = Task.objects.create(
+            department=self.department,
+            title="Completed outside the API",
+            created_by=self.owner,
+            status=Task.Status.COMPLETED,
+        )
+
+        self.assertIsNotNone(task.completed_at)
+        self.assertEqual(task.progress, 100)
+
+        task.status = Task.Status.IN_PROGRESS
+        task.save(update_fields=("status",))
+        task.refresh_from_db()
+        self.assertIsNone(task.completed_at)
+
+        task.status = Task.Status.COMPLETED
+        task.save(update_fields=("status",))
+        task.refresh_from_db()
+        self.assertIsNotNone(task.completed_at)
+        self.assertEqual(task.progress, 100)
+
+    def test_staff_with_no_completed_tasks_has_zero_performance(self):
+        task = Task.objects.create(
+            department=self.department,
+            title="Still in progress",
+            created_by=self.owner,
+            status=Task.Status.IN_PROGRESS,
+        )
+        task.assignees.add(self.member)
+
+        response = self.client.get("/api/v1/analytics/", {
+            "department": self.department.pk,
+            "days": 7,
+            "staff_search": self.member.email,
+        })
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        row = response.data["staff_performance"]["results"][0]
+        self.assertEqual(row["completed_tasks"], 0)
+        self.assertEqual(row["performance_score"], 0)
+        self.assertEqual(row["avg_completion_days"], 0.0)
+
     def test_dashboard_returns_english_sections(self):
         self.owner.first_name = "Dashboard"
         self.owner.last_name = "Owner"

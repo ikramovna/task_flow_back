@@ -3,6 +3,7 @@ import uuid
 from django.contrib.auth.models import AbstractUser
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
+from django.utils import timezone
 
 
 class TimeStampedModel(models.Model):
@@ -115,6 +116,28 @@ class Task(TimeStampedModel):
             models.Index(fields=("department", "is_archived", "status"), name="task_dept_arch_status_idx"),
             models.Index(fields=("department", "is_archived", "due_date"), name="task_dept_arch_due_idx"),
         ]
+
+    def save(self, *args, **kwargs):
+        update_fields = kwargs.get("update_fields")
+        synchronized_fields = set(update_fields) if update_fields is not None else None
+
+        if self.status == self.Status.COMPLETED:
+            if self.completed_at is None:
+                self.completed_at = timezone.now()
+                if synchronized_fields is not None:
+                    synchronized_fields.add("completed_at")
+            if self.progress != 100:
+                self.progress = 100
+                if synchronized_fields is not None:
+                    synchronized_fields.add("progress")
+        elif self.completed_at is not None:
+            self.completed_at = None
+            if synchronized_fields is not None:
+                synchronized_fields.add("completed_at")
+
+        if synchronized_fields is not None:
+            kwargs["update_fields"] = synchronized_fields
+        return super().save(*args, **kwargs)
 
 
 class Event(TimeStampedModel):

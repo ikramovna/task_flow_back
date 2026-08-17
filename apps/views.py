@@ -726,7 +726,7 @@ class AnalyticsView(APIView):
                 completion_rate = pct(len(completed_tasks), assigned)
                 on_time_rate = pct(on_time, len(completed_tasks))
                 non_overdue_rate = pct(max(assigned - overdue, 0), assigned)
-                score = round(completion_rate * .5 + on_time_rate * .3 + non_overdue_rate * .2)
+                score = round(completion_rate * .5 + on_time_rate * .3 + non_overdue_rate * .2) if completed_tasks else 0
                 rows.append({
                     "employee": {"id": str(employee.id), "full_name": employee.get_full_name() or employee.email,
                                  "email": employee.email, "avatar": request.build_absolute_uri(employee.avatar.url) if employee.avatar else None,
