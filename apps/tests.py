@@ -948,6 +948,40 @@ class DepartmentScopedApiTests(APITestCase):
         self.assertEqual(row["performance_score"], 65)
         self.assertEqual(row["performance_level"], "good")
 
+    def test_staff_average_completion_time_uses_each_employees_exact_duration(self):
+        second_member = User.objects.create_user(
+            username="second-member",
+            email="second-member@example.com",
+            password="pass12345",
+            first_name="Second",
+            department=self.department,
+        )
+        now = timezone.now()
+        fast_task = Task.objects.create(
+            department=self.department, title="Fast task", created_by=self.owner,
+            status=Task.Status.COMPLETED, completed_at=now,
+        )
+        slow_task = Task.objects.create(
+            department=self.department, title="Slow task", created_by=self.owner,
+            status=Task.Status.COMPLETED, completed_at=now,
+        )
+        fast_task.assignees.add(self.member)
+        slow_task.assignees.add(second_member)
+        Task.objects.filter(pk=fast_task.pk).update(created_at=now - timedelta(hours=12))
+        Task.objects.filter(pk=slow_task.pk).update(created_at=now - timedelta(hours=36))
+
+        response = self.client.get("/api/v1/analytics/", {
+            "department": self.department.pk, "days": 7, "ordering": "name",
+        })
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        averages = {
+            row["employee"]["id"]: row["avg_completion_days"]
+            for row in response.data["staff_performance"]["results"]
+        }
+        self.assertEqual(averages[str(self.member.pk)], 0.5)
+        self.assertEqual(averages[str(second_member.pk)], 1.5)
+
     def test_dashboard_returns_english_sections(self):
         self.owner.first_name = "Dashboard"
         self.owner.last_name = "Owner"

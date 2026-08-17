@@ -587,6 +587,9 @@ class AnalyticsView(APIView):
         def pct(value, total):
             return round(value * 100 / total, 1) if total else 0.0
 
+        def completion_days(task):
+            return max((task.completed_at - task.created_at).total_seconds() / 86400, 0)
+
         def change(current_value, previous_value, lower_is_better=False):
             if previous_value == 0:
                 value = 0.0 if current_value == 0 else 100.0
@@ -603,7 +606,7 @@ class AnalyticsView(APIView):
                 Q(completed_at__isnull=True) | Q(completed_at__date__gt=as_of)
             ).count()
             on_time = completed_qs.filter(Q(due_date__isnull=True) | Q(completed_at__date__lte=F("due_date"))).count()
-            durations = [(task.completed_at.date() - task.created_at.date()).days
+            durations = [completion_days(task)
                          for task in completed_qs.only("created_at", "completed_at") if task.completed_at]
             return {"total": total, "completed": completed_count, "completion_rate": pct(completed_count, total),
                     "on_time_rate": pct(on_time, completed_count), "overdue": overdue_count,
@@ -719,7 +722,7 @@ class AnalyticsView(APIView):
                     task.due_date is None or task.completed_at.date() <= task.due_date
                     for task in completed_tasks
                 )
-                durations = [max((task.completed_at.date() - task.created_at.date()).days, 0) for task in completed_tasks]
+                durations = [completion_days(task) for task in completed_tasks]
                 completion_rate = pct(len(completed_tasks), assigned)
                 on_time_rate = pct(on_time, len(completed_tasks))
                 non_overdue_rate = pct(max(assigned - overdue, 0), assigned)
