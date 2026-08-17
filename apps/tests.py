@@ -925,7 +925,7 @@ class DepartmentScopedApiTests(APITestCase):
 
         response = self.client.get("/api/v1/analytics/", {
             "department": self.department.pk, "days": 7, "search": "Backend",
-            "performance_level": "good", "ordering": "-performance", "page_size": 8,
+            "performance_level": "needs_improvement", "ordering": "-performance", "page_size": 8,
         })
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -945,8 +945,10 @@ class DepartmentScopedApiTests(APITestCase):
         self.assertEqual(row["in_progress_tasks"], 1)
         self.assertEqual(row["overdue_tasks"], 1)
         self.assertEqual(row["on_time_rate"], 100.0)
-        self.assertEqual(row["performance_score"], 65)
-        self.assertEqual(row["performance_level"], "good")
+        self.assertEqual(row["performance_score"], 68)
+        self.assertEqual(row["performance_level"], "needs_improvement")
+        self.assertEqual(row["performance_eligible_tasks"], 2)
+        self.assertEqual(row["overdue_control"], 50.0)
 
     def test_staff_average_completion_time_uses_each_employees_exact_duration(self):
         second_member = User.objects.create_user(
@@ -1004,7 +1006,7 @@ class DepartmentScopedApiTests(APITestCase):
         self.assertIsNotNone(task.completed_at)
         self.assertEqual(task.progress, 100)
 
-    def test_staff_with_no_completed_tasks_has_zero_performance(self):
+    def test_staff_with_no_due_tasks_is_not_rated(self):
         task = Task.objects.create(
             department=self.department,
             title="Still in progress",
@@ -1022,8 +1024,52 @@ class DepartmentScopedApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         row = response.data["staff_performance"]["results"][0]
         self.assertEqual(row["completed_tasks"], 0)
-        self.assertEqual(row["performance_score"], 0)
+        self.assertIsNone(row["performance_score"])
+        self.assertEqual(row["performance_level"], "not_rated")
         self.assertEqual(row["avg_completion_days"], 0.0)
+
+    def test_staff_performance_uses_due_tasks_and_45_35_20_weights(self):
+        now = timezone.now()
+        today = timezone.localdate()
+        tasks = []
+        for index in range(4):
+            task = Task.objects.create(
+                department=self.department,
+                title=f"Eligible task {index}",
+                created_by=self.owner,
+                due_date=today - timedelta(days=4 - index),
+                status=Task.Status.COMPLETED if index < 3 else Task.Status.IN_PROGRESS,
+                completed_at=now if index < 3 else None,
+            )
+            task.assignees.add(self.member)
+            tasks.append(task)
+        Task.objects.filter(pk=tasks[0].pk).update(completed_at=now - timedelta(days=5))
+        Task.objects.filter(pk=tasks[1].pk).update(completed_at=now - timedelta(days=4))
+        future_task = Task.objects.create(
+            department=self.department,
+            title="Future task excluded from score",
+            created_by=self.owner,
+            due_date=today + timedelta(days=2),
+            status=Task.Status.IN_PROGRESS,
+        )
+        future_task.assignees.add(self.member)
+
+        response = self.client.get("/api/v1/analytics/", {
+            "department": self.department.pk,
+            "days": 7,
+            "staff_search": self.member.email,
+        })
+
+        row = response.data["staff_performance"]["results"][0]
+        self.assertEqual(row["assigned_tasks"], 5)
+        self.assertEqual(row["performance_eligible_tasks"], 4)
+        self.assertEqual(row["performance_completed_tasks"], 3)
+        self.assertEqual(row["performance_overdue_tasks"], 1)
+        self.assertEqual(row["completion_rate"], 75.0)
+        self.assertEqual(row["on_time_rate"], 66.7)
+        self.assertEqual(row["overdue_control"], 75.0)
+        self.assertEqual(row["performance_score"], 72)
+        self.assertEqual(row["performance_level"], "good")
 
     def test_dashboard_returns_english_sections(self):
         self.owner.first_name = "Dashboard"

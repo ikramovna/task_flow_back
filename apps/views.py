@@ -473,7 +473,7 @@ class AnalyticsView(APIView):
             OpenApiParameter("staff_search", OpenApiTypes.STR, OpenApiParameter.QUERY, required=False,
                              description="Search only inside the Staff Performance table."),
             OpenApiParameter("performance_level", OpenApiTypes.STR, OpenApiParameter.QUERY, required=False,
-                             enum=["excellent", "good", "needs_attention", "critical"]),
+                             enum=["outstanding", "excellent", "good", "needs_improvement", "critical", "not_rated"]),
             OpenApiParameter("staff_filter", OpenApiTypes.STR, OpenApiParameter.QUERY, required=False,
                              enum=["all", "top_performers", "needs_attention"], default="all"),
             OpenApiParameter("ordering", OpenApiTypes.STR, OpenApiParameter.QUERY, required=False,
@@ -692,12 +692,16 @@ class AnalyticsView(APIView):
             cursor += timedelta(days=step)
 
         def performance_level(score):
-            if score >= 85:
+            if score is None:
+                return "not_rated"
+            if score >= 90:
+                return "outstanding"
+            if score >= 80:
                 return "excellent"
-            if score >= 60:
+            if score >= 70:
                 return "good"
-            if score >= 40:
-                return "needs_attention"
+            if score >= 60:
+                return "needs_improvement"
             return "critical"
 
         def staff_rows_for(period_tasks, staff, period_start, period_end):
@@ -718,15 +722,27 @@ class AnalyticsView(APIView):
                     bool(task.due_date and task.due_date < period_end and (not task.completed_at or task.completed_at.date() > period_end))
                     for task in employee_tasks
                 )
-                on_time = sum(
-                    task.due_date is None or task.completed_at.date() <= task.due_date
-                    for task in completed_tasks
-                )
                 durations = [completion_days(task) for task in completed_tasks]
-                completion_rate = pct(len(completed_tasks), assigned)
-                on_time_rate = pct(on_time, len(completed_tasks))
-                non_overdue_rate = pct(max(assigned - overdue, 0), assigned)
-                score = round(completion_rate * .5 + on_time_rate * .3 + non_overdue_rate * .2) if completed_tasks else 0
+
+                eligible_tasks = [
+                    task for task in employee_tasks
+                    if task.due_date and period_start <= task.due_date <= period_end
+                ]
+                eligible_completed = [
+                    task for task in eligible_tasks
+                    if task.completed_at and task.completed_at.date() <= period_end
+                ]
+                eligible_on_time = sum(task.completed_at.date() <= task.due_date for task in eligible_completed)
+                eligible_overdue = sum(
+                    task.due_date < period_end and (not task.completed_at or task.completed_at.date() > period_end)
+                    for task in eligible_tasks
+                )
+                completion_rate = pct(len(eligible_completed), len(eligible_tasks))
+                on_time_rate = pct(eligible_on_time, len(eligible_completed))
+                overdue_control = 100.0 - pct(eligible_overdue, len(eligible_tasks)) if eligible_tasks else 0.0
+                score = round(
+                    completion_rate * .45 + on_time_rate * .35 + overdue_control * .20
+                ) if eligible_tasks else None
                 rows.append({
                     "employee": {"id": str(employee.id), "full_name": employee.get_full_name() or employee.email,
                                  "email": employee.email, "avatar": request.build_absolute_uri(employee.avatar.url) if employee.avatar else None,
@@ -735,7 +751,11 @@ class AnalyticsView(APIView):
                     "assigned_tasks": assigned, "completed_tasks": len(completed_tasks), "in_progress_tasks": in_progress,
                     "overdue_tasks": overdue, "on_time_rate": on_time_rate,
                     "avg_completion_days": round(sum(durations) / len(durations), 1) if durations else 0.0,
-                    "completion_rate": completion_rate, "performance_score": score,
+                    "completion_rate": completion_rate, "overdue_control": overdue_control,
+                    "performance_eligible_tasks": len(eligible_tasks),
+                    "performance_completed_tasks": len(eligible_completed),
+                    "performance_overdue_tasks": eligible_overdue,
+                    "performance_score": score,
                     "performance_level": performance_level(score),
                 })
             return rows
@@ -746,7 +766,8 @@ class AnalyticsView(APIView):
         previous_staff_rows = staff_rows_for(previous_task_list, staff, previous_start, previous_end)
 
         level_filter = params.get("performance_level")
-        if level_filter and level_filter not in ("excellent", "good", "needs_attention", "critical"):
+        performance_levels = ("outstanding", "excellent", "good", "needs_improvement", "critical", "not_rated")
+        if level_filter and level_filter not in performance_levels:
             return Response({"performance_level": "Invalid performance level."}, status=status.HTTP_400_BAD_REQUEST)
         staff_filter = params.get("staff_filter", "all")
         if staff_filter not in ("all", "top_performers", "needs_attention"):
@@ -761,9 +782,9 @@ class AnalyticsView(APIView):
         if level_filter:
             filtered_staff_rows = [row for row in filtered_staff_rows if row["performance_level"] == level_filter]
         if staff_filter == "top_performers":
-            filtered_staff_rows = [row for row in filtered_staff_rows if row["performance_level"] == "excellent"]
+            filtered_staff_rows = [row for row in filtered_staff_rows if row["performance_level"] in ("outstanding", "excellent")]
         elif staff_filter == "needs_attention":
-            filtered_staff_rows = [row for row in filtered_staff_rows if row["performance_level"] in ("needs_attention", "critical")]
+            filtered_staff_rows = [row for row in filtered_staff_rows if row["performance_level"] in ("needs_improvement", "critical")]
 
         ordering = params.get("ordering", "-performance")
         ordering_fields = {"performance": "performance_score", "assigned": "assigned_tasks", "completed": "completed_tasks",
@@ -777,7 +798,11 @@ class AnalyticsView(APIView):
         if ordering_key == "employee":
             filtered_staff_rows.sort(key=lambda row: row["employee"]["full_name"].casefold(), reverse=descending)
         else:
-            filtered_staff_rows.sort(key=lambda row: (row[ordering_key], row["employee"]["full_name"].casefold()), reverse=descending)
+            filtered_staff_rows.sort(
+                key=lambda row: (row[ordering_key] if row[ordering_key] is not None else -1,
+                                 row["employee"]["full_name"].casefold()),
+                reverse=descending,
+            )
         try:
             page = int(params.get("page", 1))
             page_size = int(params.get("page_size", 8))
@@ -790,8 +815,8 @@ class AnalyticsView(APIView):
         offset = (page - 1) * page_size
         paged_staff_rows = filtered_staff_rows[offset:offset + page_size]
 
-        scored = [row["performance_score"] for row in all_staff_rows if row["assigned_tasks"]]
-        previous_scored = [row["performance_score"] for row in previous_staff_rows if row["assigned_tasks"]]
+        scored = [row["performance_score"] for row in all_staff_rows if row["performance_score"] is not None]
+        previous_scored = [row["performance_score"] for row in previous_staff_rows if row["performance_score"] is not None]
         average_performance = round(sum(scored) / len(scored), 1) if scored else 0.0
         previous_average_performance = round(sum(previous_scored) / len(previous_scored), 1) if previous_scored else 0.0
         current_staff_count = len(staff)
@@ -800,15 +825,16 @@ class AnalyticsView(APIView):
         performance_trend = []
         cursor = start_date
         while cursor <= end_date:
-            existed = [task for task in current_task_list if task.created_at.date() <= cursor]
-            completed_to_date = [task for task in existed if task.completed_at and start_date <= task.completed_at.date() <= cursor]
-            overdue_to_date = [task for task in existed if task.due_date and task.due_date < cursor and
+            eligible_to_date = [task for task in current_task_list if task.due_date and start_date <= task.due_date <= cursor]
+            completed_to_date = [task for task in eligible_to_date if task.completed_at and task.completed_at.date() <= cursor]
+            overdue_to_date = [task for task in eligible_to_date if task.due_date < cursor and
                                (not task.completed_at or task.completed_at.date() > cursor)]
-            on_time_to_date = [task for task in completed_to_date if task.due_date is None or task.completed_at.date() <= task.due_date]
-            trend_completion = pct(len(completed_to_date), len(existed))
+            on_time_to_date = [task for task in completed_to_date if task.completed_at.date() <= task.due_date]
+            trend_completion = pct(len(completed_to_date), len(eligible_to_date))
             trend_on_time = pct(len(on_time_to_date), len(completed_to_date))
-            trend_non_overdue = pct(max(len(existed) - len(overdue_to_date), 0), len(existed))
-            performance_trend.append({"date": cursor, "value": round(trend_completion * .5 + trend_on_time * .3 + trend_non_overdue * .2)})
+            trend_overdue_control = 100.0 - pct(len(overdue_to_date), len(eligible_to_date)) if eligible_to_date else 0.0
+            trend_score = round(trend_completion * .45 + trend_on_time * .35 + trend_overdue_control * .20) if eligible_to_date else 0
+            performance_trend.append({"date": cursor, "value": trend_score})
             cursor += timedelta(days=step)
 
         response = {
@@ -823,10 +849,12 @@ class AnalyticsView(APIView):
                                         "employees": [{"id": str(u.id), "full_name": u.get_full_name() or u.email} for u in employee_options],
                                         "priorities": [{"value": k, "label": v} for k, v in Task.Priority.choices],
                                         "statuses": [{"value": k, "label": v} for k, v in Task.Status.choices],
-                                        "performance_levels": [{"value": "excellent", "label": "Excellent"},
+                                        "performance_levels": [{"value": "outstanding", "label": "Outstanding"},
+                                                               {"value": "excellent", "label": "Excellent"},
                                                                {"value": "good", "label": "Good"},
-                                                               {"value": "needs_attention", "label": "Needs Attention"},
-                                                               {"value": "critical", "label": "Critical"}]}},
+                                                               {"value": "needs_improvement", "label": "Needs Improvement"},
+                                                               {"value": "critical", "label": "Critical"},
+                                                               {"value": "not_rated", "label": "Not Rated"}]}},
             "summary": {
                 "total_staff": {"value": current_staff_count, "unit": "staff", "change": change(current_staff_count, previous_staff_count)},
                 "average_performance": {"value": average_performance, "unit": "percent", "change": change(average_performance, previous_average_performance)},
