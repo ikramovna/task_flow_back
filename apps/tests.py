@@ -905,6 +905,49 @@ class DepartmentScopedApiTests(APITestCase):
         })
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_analytics_matches_reports_dashboard_contract(self):
+        self.member.first_name = "Aziza"
+        self.member.last_name = "Karimova"
+        self.member.job_title = "Backend Engineer"
+        self.member.save(update_fields=["first_name", "last_name", "job_title"])
+        completed = Task.objects.create(
+            department=self.department, title="Older completed task", created_by=self.owner,
+            status=Task.Status.COMPLETED, due_date=timezone.localdate(), completed_at=timezone.now(),
+        )
+        completed.assignees.add(self.member)
+        overdue = Task.objects.create(
+            department=self.department, title="Older overdue task", created_by=self.owner,
+            status=Task.Status.IN_PROGRESS, due_date=timezone.localdate() - timedelta(days=3),
+        )
+        overdue.assignees.add(self.member)
+        old_created_at = timezone.now() - timedelta(days=20)
+        Task.objects.filter(pk__in=[completed.pk, overdue.pk]).update(created_at=old_created_at)
+
+        response = self.client.get("/api/v1/analytics/", {
+            "department": self.department.pk, "days": 7, "search": "Backend",
+            "performance_level": "good", "ordering": "-performance", "page_size": 8,
+        })
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["summary"]["total_staff"]["value"], 1)
+        self.assertEqual(response.data["summary"]["task_completion_rate"]["value"], 50.0)
+        self.assertIn("average_performance", response.data["summary"])
+        self.assertTrue(response.data["charts"]["performance_trend"])
+        distribution = response.data["charts"]["workload_distribution"][0]
+        self.assertEqual((distribution["completed"], distribution["in_progress"], distribution["overdue"]), (1, 1, 1))
+        staff = response.data["staff_performance"]
+        self.assertEqual(staff["count"], 1)
+        row = staff["results"][0]
+        self.assertEqual(row["employee"]["full_name"], "Aziza Karimova")
+        self.assertEqual(row["employee"]["job_title"], "Backend Engineer")
+        self.assertEqual(row["assigned_tasks"], 2)
+        self.assertEqual(row["completed_tasks"], 1)
+        self.assertEqual(row["in_progress_tasks"], 1)
+        self.assertEqual(row["overdue_tasks"], 1)
+        self.assertEqual(row["on_time_rate"], 100.0)
+        self.assertEqual(row["performance_score"], 65)
+        self.assertEqual(row["performance_level"], "good")
+
     def test_dashboard_returns_english_sections(self):
         self.owner.first_name = "Dashboard"
         self.owner.last_name = "Owner"

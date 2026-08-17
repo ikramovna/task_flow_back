@@ -468,11 +468,24 @@ class AnalyticsView(APIView):
             OpenApiParameter("granularity", OpenApiTypes.STR, OpenApiParameter.QUERY, required=False,
                              enum=["day", "week", "month"],
                              description="Trend bucket size; selected automatically when omitted."),
+            OpenApiParameter("search", OpenApiTypes.STR, OpenApiParameter.QUERY, required=False,
+                             description="Search staff by name, email, username or job title."),
+            OpenApiParameter("staff_search", OpenApiTypes.STR, OpenApiParameter.QUERY, required=False,
+                             description="Search only inside the Staff Performance table."),
+            OpenApiParameter("performance_level", OpenApiTypes.STR, OpenApiParameter.QUERY, required=False,
+                             enum=["excellent", "good", "needs_attention", "critical"]),
+            OpenApiParameter("staff_filter", OpenApiTypes.STR, OpenApiParameter.QUERY, required=False,
+                             enum=["all", "top_performers", "needs_attention"], default="all"),
+            OpenApiParameter("ordering", OpenApiTypes.STR, OpenApiParameter.QUERY, required=False,
+                             description="Staff ordering: performance, assigned, completed, in_progress, overdue, on_time, avg_time or name. Prefix with '-' for descending."),
+            OpenApiParameter("page", OpenApiTypes.INT, OpenApiParameter.QUERY, required=False, default=1),
+            OpenApiParameter("page_size", OpenApiTypes.INT, OpenApiParameter.QUERY, required=False, default=8),
         ],
         responses=inline_serializer(
             name="AnalyticsResponse",
             fields={"meta": serializers.JSONField(), "summary": serializers.JSONField(),
-                    "charts": serializers.JSONField(), "overdue": serializers.JSONField(),
+                    "charts": serializers.JSONField(), "staff_performance": serializers.JSONField(),
+                    "overdue": serializers.JSONField(),
                     "task_completion_rate": serializers.FloatField(),
                     "team_velocity": serializers.IntegerField(),
                     "overdue_tasks": serializers.IntegerField(),
@@ -517,6 +530,16 @@ class AnalyticsView(APIView):
             departments = departments.filter(pk=department_id)
 
         employees = User.objects.filter(is_active=True, department__in=departments).distinct().order_by("first_name", "last_name")
+        if request.user.role not in PRIVILEGED_TASK_ROLES:
+            employees = employees.filter(pk=request.user.pk)
+        employee_options = employees
+        search = params.get("search", "").strip()
+        if search:
+            employees = employees.filter(
+                Q(first_name__icontains=search) | Q(last_name__icontains=search)
+                | Q(email__icontains=search) | Q(username__icontains=search)
+                | Q(job_title__icontains=search)
+            )
 
         universe = visible_tasks_for(
             Task.objects.filter(is_archived=False, department__in=departments), request.user
@@ -529,12 +552,15 @@ class AnalyticsView(APIView):
         task_status = params.get("status")
         if employee_id:
             try:
-                employee_exists = employees.filter(pk=employee_id).exists()
+                employee_exists = employee_options.filter(pk=employee_id).exists()
             except (TypeError, ValueError):
                 employee_exists = False
             if not employee_exists:
                 return Response({"employee": "Employee is not available in the selected department(s)."}, status=status.HTTP_400_BAD_REQUEST)
             universe = universe.filter(Q(assignees__id=employee_id) | Q(main_assignee_id=employee_id))
+            employees = employees.filter(pk=employee_id)
+        elif search:
+            universe = universe.filter(Q(assignees__in=employees) | Q(main_assignee__in=employees))
         if priority:
             if priority not in Task.Priority.values:
                 return Response({"priority": "Invalid priority."}, status=status.HTTP_400_BAD_REQUEST)
@@ -548,8 +574,15 @@ class AnalyticsView(APIView):
         period_days = (end_date - start_date).days + 1
         previous_end = start_date - timedelta(days=1)
         previous_start = previous_end - timedelta(days=period_days - 1)
-        current = universe.filter(created_at__date__range=(start_date, end_date))
-        previous = universe.filter(created_at__date__range=(previous_start, previous_end))
+        # A task belongs to a period when it existed during that period. This keeps
+        # older active/overdue work in the report instead of counting only newly
+        # created tasks.
+        current = universe.filter(created_at__date__lte=end_date).filter(
+            Q(completed_at__isnull=True) | Q(completed_at__date__gte=start_date)
+        )
+        previous = universe.filter(created_at__date__lte=previous_end).filter(
+            Q(completed_at__isnull=True) | Q(completed_at__date__gte=previous_start)
+        )
 
         def pct(value, total):
             return round(value * 100 / total, 1) if total else 0.0
@@ -562,11 +595,13 @@ class AnalyticsView(APIView):
             return {"value": value, "direction": "down" if value < 0 else "up" if value > 0 else "flat",
                     "is_positive": value <= 0 if lower_is_better else value >= 0}
 
-        def snapshot(qs, as_of):
+        def snapshot(qs, period_start, as_of):
             total = qs.count()
-            completed_qs = qs.filter(status=Task.Status.COMPLETED)
+            completed_qs = qs.filter(completed_at__date__range=(period_start, as_of))
             completed_count = completed_qs.count()
-            overdue_count = qs.exclude(status=Task.Status.COMPLETED).filter(due_date__lt=as_of).count()
+            overdue_count = qs.filter(due_date__lt=as_of).filter(
+                Q(completed_at__isnull=True) | Q(completed_at__date__gt=as_of)
+            ).count()
             on_time = completed_qs.filter(Q(due_date__isnull=True) | Q(completed_at__date__lte=F("due_date"))).count()
             durations = [(task.completed_at.date() - task.created_at.date()).days
                          for task in completed_qs.only("created_at", "completed_at") if task.completed_at]
@@ -575,10 +610,10 @@ class AnalyticsView(APIView):
                     "overdue_rate": pct(overdue_count, total),
                     "avg_completion_days": round(sum(durations) / len(durations), 1) if durations else 0.0}
 
-        current_stats = snapshot(current, end_date)
-        previous_stats = snapshot(previous, previous_end)
-        active_count = current.exclude(status=Task.Status.COMPLETED).count()
-        previous_active = previous.exclude(status=Task.Status.COMPLETED).count()
+        current_stats = snapshot(current, start_date, end_date)
+        previous_stats = snapshot(previous, previous_start, previous_end)
+        active_count = current.filter(Q(completed_at__isnull=True) | Q(completed_at__date__gt=end_date)).count()
+        previous_active = previous.filter(Q(completed_at__isnull=True) | Q(completed_at__date__gt=previous_end)).count()
 
         granularity = params.get("granularity") or ("day" if period_days <= 31 else "week" if period_days <= 120 else "month")
         trunc = {"day": TruncDate, "week": TruncWeek, "month": TruncMonth}.get(granularity)
@@ -606,10 +641,14 @@ class AnalyticsView(APIView):
                                "percentage": pct(no_priority, current_stats["total"])})
 
         department_rows = current.values("department_id", "department__name").annotate(
-            total=Count("id", distinct=True), completed=Count("id", filter=Q(status=Task.Status.COMPLETED), distinct=True)
+            total=Count("id", distinct=True),
+            completed=Count("id", filter=Q(completed_at__date__range=(start_date, end_date)), distinct=True),
+            in_progress=Count("id", filter=Q(status=Task.Status.IN_PROGRESS), distinct=True),
+            overdue=Count("id", filter=Q(due_date__lt=end_date) & (Q(completed_at__isnull=True) | Q(completed_at__date__gt=end_date)), distinct=True),
         ).order_by("department__name")
         department_performance = [{"department_id": str(row["department_id"]), "department_name": row["department__name"],
-                                   "completed": row["completed"], "total": row["total"],
+                                   "completed": row["completed"], "in_progress": row["in_progress"],
+                                   "overdue": row["overdue"], "total": row["total"],
                                    "completion_rate": pct(row["completed"], row["total"])} for row in department_rows]
 
         workload_rows = current.values("assignees__id", "assignees__first_name", "assignees__last_name", "assignees__avatar").exclude(
@@ -623,7 +662,9 @@ class AnalyticsView(APIView):
                      "active_tasks": row["active"], "overdue_tasks": row["overdue"], "due_this_week": row["due_this_week"]}
                     for row in workload_rows]
 
-        overdue_qs = current.exclude(status=Task.Status.COMPLETED).filter(due_date__lt=end_date).select_related(
+        overdue_qs = current.filter(due_date__lt=end_date).filter(
+            Q(completed_at__isnull=True) | Q(completed_at__date__gt=end_date)
+        ).select_related(
             "department", "main_assignee").prefetch_related("assignees")
         overdue_items = []
         for task in overdue_qs.order_by("due_date", "-priority", "title"):
@@ -635,23 +676,157 @@ class AnalyticsView(APIView):
                                   "assignee": {"id": str(assignee.id), "full_name": assignee.get_full_name() or assignee.email,
                                                "avatar": request.build_absolute_uri(assignee.avatar.url) if assignee and assignee.avatar else None} if assignee else None})
 
+        current_task_list = list(current.prefetch_related("assignees"))
         overdue_trend = []
         cursor = start_date
         step = 1 if granularity == "day" else 7 if granularity == "week" else 30
         while cursor <= end_date:
-            overdue_trend.append({"date": cursor, "count": universe.filter(created_at__date__lte=cursor).exclude(
-                status=Task.Status.COMPLETED).filter(due_date__lt=cursor).count()})
+            overdue_trend.append({"date": cursor, "count": sum(
+                task.created_at.date() <= cursor and bool(task.due_date and task.due_date < cursor)
+                and (not task.completed_at or task.completed_at.date() > cursor)
+                for task in current_task_list
+            )})
+            cursor += timedelta(days=step)
+
+        def performance_level(score):
+            if score >= 85:
+                return "excellent"
+            if score >= 60:
+                return "good"
+            if score >= 40:
+                return "needs_attention"
+            return "critical"
+
+        def staff_rows_for(period_tasks, staff, period_start, period_end):
+            memberships = []
+            for task in period_tasks:
+                assignee_ids = {str(user.id) for user in task.assignees.all()}
+                if task.main_assignee_id:
+                    assignee_ids.add(str(task.main_assignee_id))
+                memberships.append((task, assignee_ids))
+
+            rows = []
+            for employee in staff:
+                employee_tasks = [task for task, ids in memberships if str(employee.id) in ids]
+                assigned = len(employee_tasks)
+                completed_tasks = [task for task in employee_tasks if task.completed_at and period_start <= task.completed_at.date() <= period_end]
+                in_progress = sum(task.status == Task.Status.IN_PROGRESS for task in employee_tasks)
+                overdue = sum(
+                    bool(task.due_date and task.due_date < period_end and (not task.completed_at or task.completed_at.date() > period_end))
+                    for task in employee_tasks
+                )
+                on_time = sum(
+                    task.due_date is None or task.completed_at.date() <= task.due_date
+                    for task in completed_tasks
+                )
+                durations = [max((task.completed_at.date() - task.created_at.date()).days, 0) for task in completed_tasks]
+                completion_rate = pct(len(completed_tasks), assigned)
+                on_time_rate = pct(on_time, len(completed_tasks))
+                non_overdue_rate = pct(max(assigned - overdue, 0), assigned)
+                score = round(completion_rate * .5 + on_time_rate * .3 + non_overdue_rate * .2)
+                rows.append({
+                    "employee": {"id": str(employee.id), "full_name": employee.get_full_name() or employee.email,
+                                 "email": employee.email, "avatar": request.build_absolute_uri(employee.avatar.url) if employee.avatar else None,
+                                 "job_title": employee.job_title},
+                    "department": {"id": str(employee.department_id), "name": employee.department.name} if employee.department else None,
+                    "assigned_tasks": assigned, "completed_tasks": len(completed_tasks), "in_progress_tasks": in_progress,
+                    "overdue_tasks": overdue, "on_time_rate": on_time_rate,
+                    "avg_completion_days": round(sum(durations) / len(durations), 1) if durations else 0.0,
+                    "completion_rate": completion_rate, "performance_score": score,
+                    "performance_level": performance_level(score),
+                })
+            return rows
+
+        staff = list(employees.select_related("department"))
+        previous_task_list = list(previous.prefetch_related("assignees"))
+        all_staff_rows = staff_rows_for(current_task_list, staff, start_date, end_date)
+        previous_staff_rows = staff_rows_for(previous_task_list, staff, previous_start, previous_end)
+
+        level_filter = params.get("performance_level")
+        if level_filter and level_filter not in ("excellent", "good", "needs_attention", "critical"):
+            return Response({"performance_level": "Invalid performance level."}, status=status.HTTP_400_BAD_REQUEST)
+        staff_filter = params.get("staff_filter", "all")
+        if staff_filter not in ("all", "top_performers", "needs_attention"):
+            return Response({"staff_filter": "Use all, top_performers or needs_attention."}, status=status.HTTP_400_BAD_REQUEST)
+        filtered_staff_rows = all_staff_rows
+        staff_search = params.get("staff_search", "").strip().casefold()
+        if staff_search:
+            filtered_staff_rows = [row for row in filtered_staff_rows if staff_search in " ".join((
+                row["employee"]["full_name"], row["employee"]["email"], row["employee"]["job_title"],
+                row["department"]["name"] if row["department"] else "",
+            )).casefold()]
+        if level_filter:
+            filtered_staff_rows = [row for row in filtered_staff_rows if row["performance_level"] == level_filter]
+        if staff_filter == "top_performers":
+            filtered_staff_rows = [row for row in filtered_staff_rows if row["performance_level"] == "excellent"]
+        elif staff_filter == "needs_attention":
+            filtered_staff_rows = [row for row in filtered_staff_rows if row["performance_level"] in ("needs_attention", "critical")]
+
+        ordering = params.get("ordering", "-performance")
+        ordering_fields = {"performance": "performance_score", "assigned": "assigned_tasks", "completed": "completed_tasks",
+                           "in_progress": "in_progress_tasks", "overdue": "overdue_tasks", "on_time": "on_time_rate",
+                           "avg_time": "avg_completion_days", "name": "employee"}
+        descending = ordering.startswith("-")
+        ordering_name = ordering.lstrip("-")
+        if ordering_name not in ordering_fields:
+            return Response({"ordering": "Invalid staff ordering."}, status=status.HTTP_400_BAD_REQUEST)
+        ordering_key = ordering_fields[ordering_name]
+        if ordering_key == "employee":
+            filtered_staff_rows.sort(key=lambda row: row["employee"]["full_name"].casefold(), reverse=descending)
+        else:
+            filtered_staff_rows.sort(key=lambda row: (row[ordering_key], row["employee"]["full_name"].casefold()), reverse=descending)
+        try:
+            page = int(params.get("page", 1))
+            page_size = int(params.get("page_size", 8))
+            if page < 1 or page_size < 1 or page_size > 100:
+                raise ValueError
+        except (TypeError, ValueError):
+            return Response({"pagination": "page must be >= 1 and page_size must be between 1 and 100."}, status=status.HTTP_400_BAD_REQUEST)
+        staff_count = len(filtered_staff_rows)
+        page_count = (staff_count + page_size - 1) // page_size
+        offset = (page - 1) * page_size
+        paged_staff_rows = filtered_staff_rows[offset:offset + page_size]
+
+        scored = [row["performance_score"] for row in all_staff_rows if row["assigned_tasks"]]
+        previous_scored = [row["performance_score"] for row in previous_staff_rows if row["assigned_tasks"]]
+        average_performance = round(sum(scored) / len(scored), 1) if scored else 0.0
+        previous_average_performance = round(sum(previous_scored) / len(previous_scored), 1) if previous_scored else 0.0
+        current_staff_count = len(staff)
+        previous_staff_count = sum(employee.date_joined.date() <= previous_end for employee in staff)
+
+        performance_trend = []
+        cursor = start_date
+        while cursor <= end_date:
+            existed = [task for task in current_task_list if task.created_at.date() <= cursor]
+            completed_to_date = [task for task in existed if task.completed_at and start_date <= task.completed_at.date() <= cursor]
+            overdue_to_date = [task for task in existed if task.due_date and task.due_date < cursor and
+                               (not task.completed_at or task.completed_at.date() > cursor)]
+            on_time_to_date = [task for task in completed_to_date if task.due_date is None or task.completed_at.date() <= task.due_date]
+            trend_completion = pct(len(completed_to_date), len(existed))
+            trend_on_time = pct(len(on_time_to_date), len(completed_to_date))
+            trend_non_overdue = pct(max(len(existed) - len(overdue_to_date), 0), len(existed))
+            performance_trend.append({"date": cursor, "value": round(trend_completion * .5 + trend_on_time * .3 + trend_non_overdue * .2)})
             cursor += timedelta(days=step)
 
         response = {
             "meta": {"start_date": start_date, "end_date": end_date, "previous_start_date": previous_start,
                      "previous_end_date": previous_end, "granularity": granularity, "generated_at": timezone.now(),
-                     "applied_filters": {"department": department_id, "employee": employee_id, "priority": priority, "status": task_status},
+                     "applied_filters": {"department": department_id, "employee": employee_id, "priority": priority,
+                                         "status": task_status, "search": search or None,
+                                         "staff_search": staff_search or None,
+                                         "performance_level": level_filter, "staff_filter": staff_filter,
+                                         "ordering": ordering, "page": page, "page_size": page_size},
                      "filter_options": {"departments": [{"id": str(d.id), "name": d.name} for d in departments],
-                                        "employees": [{"id": str(u.id), "full_name": u.get_full_name() or u.email} for u in employees],
+                                        "employees": [{"id": str(u.id), "full_name": u.get_full_name() or u.email} for u in employee_options],
                                         "priorities": [{"value": k, "label": v} for k, v in Task.Priority.choices],
-                                        "statuses": [{"value": k, "label": v} for k, v in Task.Status.choices]}},
+                                        "statuses": [{"value": k, "label": v} for k, v in Task.Status.choices],
+                                        "performance_levels": [{"value": "excellent", "label": "Excellent"},
+                                                               {"value": "good", "label": "Good"},
+                                                               {"value": "needs_attention", "label": "Needs Attention"},
+                                                               {"value": "critical", "label": "Critical"}]}},
             "summary": {
+                "total_staff": {"value": current_staff_count, "unit": "staff", "change": change(current_staff_count, previous_staff_count)},
+                "average_performance": {"value": average_performance, "unit": "percent", "change": change(average_performance, previous_average_performance)},
                 "task_completion_rate": {"value": current_stats["completion_rate"], "unit": "percent", "change": change(current_stats["completion_rate"], previous_stats["completion_rate"])},
                 "on_time_completion": {"value": current_stats["on_time_rate"], "unit": "percent", "change": change(current_stats["on_time_rate"], previous_stats["on_time_rate"])},
                 "overdue_rate": {"value": current_stats["overdue_rate"], "unit": "percent", "count": current_stats["overdue"], "change": change(current_stats["overdue_rate"], previous_stats["overdue_rate"], True)},
@@ -659,10 +834,16 @@ class AnalyticsView(APIView):
                 "active_workload": {"value": active_count, "unit": "tasks", "staff_count": len(workload), "change": change(active_count, previous_active)},
             },
             "charts": {"task_completion_trend": sorted(trend.values(), key=lambda item: item["date"]),
+                       "performance_trend": performance_trend,
                        "task_status": {"total": current_stats["total"], "items": status_chart},
                        "department_performance": department_performance, "team_workload": workload,
+                       "workload_distribution": department_performance,
                        "tasks_by_priority": {"total": current_stats["total"], "items": priority_chart},
                        "overdue_trend": overdue_trend},
+            "staff_performance": {"count": staff_count, "page": page, "page_size": page_size,
+                                  "total_pages": page_count, "next_page": page + 1 if page < page_count else None,
+                                  "previous_page": page - 1 if page > 1 and page_count else None,
+                                  "results": paged_staff_rows},
             "overdue": {"count": len(overdue_items), "staff_count": len({item["assignee"]["id"] for item in overdue_items if item["assignee"]}), "items": overdue_items},
             # Legacy fields retained so existing frontend clients do not break.
             "task_completion_rate": current_stats["completion_rate"],
