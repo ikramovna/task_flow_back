@@ -598,6 +598,27 @@ class AnalyticsView(APIView):
             return {"value": value, "direction": "down" if value < 0 else "up" if value > 0 else "flat",
                     "is_positive": value <= 0 if lower_is_better else value >= 0}
 
+        def assigned_workload(qs, eligible_employee_ids):
+            """Return effort shares and assignee count for the selected employees.
+
+            A task's effort is split equally between all of its assignees. Unassigned
+            tasks do not contribute to workload, and only eligible active employees
+            are included in the returned average.
+            """
+            eligible_employee_ids = set(eligible_employee_ids)
+            workload_by_employee = {}
+            for task in qs.prefetch_related("assignees").only("id", "effort_score"):
+                assignee_ids = [assignee.id for assignee in task.assignees.all()]
+                if not assignee_ids:
+                    continue
+                effort_share = task.effort_score / len(assignee_ids)
+                for assignee_id in assignee_ids:
+                    if assignee_id in eligible_employee_ids:
+                        workload_by_employee[assignee_id] = (
+                            workload_by_employee.get(assignee_id, 0) + effort_share
+                        )
+            return sum(workload_by_employee.values()), len(workload_by_employee)
+
         accountable_statuses = (Task.Status.IN_PROGRESS, Task.Status.COMPLETED)
 
         def snapshot(qs, period_start, as_of):
@@ -673,6 +694,13 @@ class AnalyticsView(APIView):
         department_performance = []
         for row in department_rows:
             employee_count = employee_counts.get(row["department_id"], 0)
+            department_employee_ids = employees.filter(
+                department_id=row["department_id"]
+            ).values_list("id", flat=True)
+            assigned_effort_points, assigned_employee_count = assigned_workload(
+                current.filter(department_id=row["department_id"]),
+                department_employee_ids,
+            )
             department_performance.append({
                 "department_id": str(row["department_id"]),
                 "department_name": row["department__name"],
@@ -685,7 +713,8 @@ class AnalyticsView(APIView):
                 "overdue": row["overdue"],
                 "tasks_per_employee": round(row["total"] / employee_count, 1) if employee_count else 0.0,
                 "completed_tasks_per_employee": round(row["completed"] / employee_count, 1) if employee_count else 0.0,
-                "weighted_workload_per_employee": round((row["total_effort_points"] or 0) / employee_count, 1) if employee_count else 0.0,
+                "weighted_workload_per_employee": round(assigned_effort_points / assigned_employee_count, 1) if assigned_employee_count else 0.0,
+                "workload_assigned_employees": assigned_employee_count,
                 "completion_rate": pct(row["completed"], row["total"]),
                 "overdue_rate": pct(row["overdue"], row["total"]),
             })
@@ -852,7 +881,10 @@ class AnalyticsView(APIView):
         previous_average_performance = round(sum(previous_scored) / len(previous_scored), 1) if previous_scored else 0.0
         current_staff_count = len(staff)
         previous_staff_count = sum(employee.date_joined.date() <= previous_end for employee in staff)
-        total_effort_points = current.aggregate(total=Sum("effort_score"))["total"] or 0
+        assigned_effort_points, assigned_employee_count = assigned_workload(
+            current,
+            employees.values_list("id", flat=True),
+        )
         workload_kpis = {
             "tasks_per_employee": {
                 "value": round(status_total / current_staff_count, 1) if current_staff_count else 0.0,
@@ -879,10 +911,10 @@ class AnalyticsView(APIView):
                 "total_tasks": status_total,
             },
             "weighted_workload_per_employee": {
-                "value": round(total_effort_points / current_staff_count, 1) if current_staff_count else 0.0,
+                "value": round(assigned_effort_points / assigned_employee_count, 1) if assigned_employee_count else 0.0,
                 "unit": "effort_points_per_employee",
-                "total_effort_points": total_effort_points,
-                "employees": current_staff_count,
+                "total_effort_points": round(assigned_effort_points, 1),
+                "employees": assigned_employee_count,
             },
         }
         analytics_cards = [

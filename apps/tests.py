@@ -1025,6 +1025,39 @@ class DepartmentScopedApiTests(APITestCase):
             ],
         )
 
+    def test_weighted_workload_splits_effort_and_ignores_unassigned_tasks(self):
+        shared = Task.objects.create(
+            department=self.department,
+            title="Shared task",
+            created_by=self.owner,
+            effort_score=4,
+        )
+        shared.assignees.add(self.owner, self.member)
+        member_only = Task.objects.create(
+            department=self.department,
+            title="Member task",
+            created_by=self.owner,
+            effort_score=2,
+        )
+        member_only.assignees.add(self.member)
+        Task.objects.create(
+            department=self.department,
+            title="Unassigned task",
+            created_by=self.owner,
+            effort_score=5,
+        )
+
+        response = self.client.get("/api/v1/analytics/", {
+            "department": self.department.pk,
+            "days": 30,
+        })
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        workload = response.data["summary"]["workload_kpis"]["weighted_workload_per_employee"]
+        self.assertEqual(workload["value"], 3.0)
+        self.assertEqual(workload["total_effort_points"], 6.0)
+        self.assertEqual(workload["employees"], 2)
+
     def test_staff_average_completion_time_uses_each_employees_exact_duration(self):
         second_member = User.objects.create_user(
             username="second-member",
