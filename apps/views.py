@@ -1060,7 +1060,14 @@ class DashboardView(APIView):
             total=Count("id", distinct=True),
             archived=Count("id", filter=Q(is_archived=True), distinct=True),
             completed=Count("id", filter=Q(is_archived=False, status=Task.Status.COMPLETED), distinct=True),
-            in_progress=Count("id", filter=Q(is_archived=False, status=Task.Status.IN_PROGRESS), distinct=True),
+            in_progress=Count(
+                "id",
+                filter=Q(
+                    is_archived=False,
+                    status__in=(Task.Status.IN_PROGRESS, Task.Status.NOT_STARTED),
+                ),
+                distinct=True,
+            ),
             not_started=Count("id", filter=Q(is_archived=False, status=Task.Status.NOT_STARTED), distinct=True),
             backlog=Count("id", filter=Q(is_archived=False, status=Task.Status.BACKLOG), distinct=True),
             on_hold=Count("id", filter=Q(is_archived=False, status=Task.Status.ON_HOLD), distinct=True),

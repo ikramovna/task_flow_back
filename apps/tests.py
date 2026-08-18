@@ -1247,6 +1247,12 @@ class DepartmentScopedApiTests(APITestCase):
         )
         Task.objects.create(
             department=self.department,
+            title="To do task",
+            created_by=self.owner,
+            status=Task.Status.NOT_STARTED,
+        )
+        Task.objects.create(
+            department=self.department,
             title="Future task",
             created_by=self.owner,
             status=Task.Status.BACKLOG,
@@ -1282,12 +1288,13 @@ class DepartmentScopedApiTests(APITestCase):
         self.assertIn("upcoming_deadlines", response.data)
         self.assertIn("tasks_by_department", response.data)
         self.assertIn("recent_tasks", response.data)
-        self.assertEqual(response.data["summary"]["in_progress_tasks"]["count"], 1)
+        self.assertEqual(response.data["summary"]["in_progress_tasks"]["count"], 2)
+        self.assertEqual(response.data["summary"]["not_started_tasks"]["count"], 1)
         self.assertEqual(response.data["summary"]["backlog_tasks"]["count"], 1)
         self.assertEqual(response.data["summary"]["on_hold_tasks"]["count"], 1)
-        self.assertEqual(response.data["summary"]["total_tasks"]["count"], 4)
+        self.assertEqual(response.data["summary"]["total_tasks"]["count"], 5)
         self.assertEqual(response.data["summary"]["archived_tasks"]["count"], 1)
-        self.assertEqual(response.data["summary"]["archived_tasks"]["percentage"], 25.0)
+        self.assertEqual(response.data["summary"]["archived_tasks"]["percentage"], 20.0)
         creator = response.data["recent_tasks"][0]["created_by_detail"]
         self.assertEqual(set(creator), {"id", "full_name", "avatar"})
         self.assertEqual(creator["full_name"], "Dashboard Owner")
