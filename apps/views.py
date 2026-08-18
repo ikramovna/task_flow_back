@@ -783,7 +783,10 @@ class AnalyticsView(APIView):
                 assigned = len(employee_tasks)
                 assigned_effort_points = sum(task.effort_score for task in employee_tasks)
                 completed_tasks = [task for task in employee_tasks if task.completed_at and period_start <= task.completed_at.date() <= period_end]
-                in_progress = sum(task.status == Task.Status.IN_PROGRESS for task in employee_tasks)
+                in_progress = sum(
+                    task.status in (Task.Status.IN_PROGRESS, Task.Status.NOT_STARTED)
+                    for task in employee_tasks
+                )
                 on_hold = sum(task.status == Task.Status.ON_HOLD and not task.is_archived for task in employee_tasks)
                 overdue = sum(
                     bool(task.due_date and task.due_date < period_end and (not task.completed_at or task.completed_at.date() > period_end))
@@ -1060,14 +1063,7 @@ class DashboardView(APIView):
             total=Count("id", distinct=True),
             archived=Count("id", filter=Q(is_archived=True), distinct=True),
             completed=Count("id", filter=Q(is_archived=False, status=Task.Status.COMPLETED), distinct=True),
-            in_progress=Count(
-                "id",
-                filter=Q(
-                    is_archived=False,
-                    status__in=(Task.Status.IN_PROGRESS, Task.Status.NOT_STARTED),
-                ),
-                distinct=True,
-            ),
+            in_progress=Count("id", filter=Q(is_archived=False, status=Task.Status.IN_PROGRESS), distinct=True),
             not_started=Count("id", filter=Q(is_archived=False, status=Task.Status.NOT_STARTED), distinct=True),
             backlog=Count("id", filter=Q(is_archived=False, status=Task.Status.BACKLOG), distinct=True),
             on_hold=Count("id", filter=Q(is_archived=False, status=Task.Status.ON_HOLD), distinct=True),

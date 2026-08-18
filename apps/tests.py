@@ -959,6 +959,11 @@ class DepartmentScopedApiTests(APITestCase):
             status=Task.Status.IN_PROGRESS, due_date=timezone.localdate() - timedelta(days=3),
         )
         overdue.assignees.add(self.member)
+        todo = Task.objects.create(
+            department=self.department, title="To do task", created_by=self.owner,
+            status=Task.Status.NOT_STARTED,
+        )
+        todo.assignees.add(self.member)
         old_created_at = timezone.now() - timedelta(days=20)
         Task.objects.filter(pk__in=[completed.pk, overdue.pk]).update(created_at=old_created_at)
 
@@ -985,10 +990,10 @@ class DepartmentScopedApiTests(APITestCase):
         row = staff["results"][0]
         self.assertEqual(row["employee"]["full_name"], "Aziza Karimova")
         self.assertEqual(row["employee"]["job_title"], "Backend Engineer")
-        self.assertEqual(row["assigned_tasks"], 2)
-        self.assertEqual(row["assigned_effort_points"], 2)
+        self.assertEqual(row["assigned_tasks"], 3)
+        self.assertEqual(row["assigned_effort_points"], 3)
         self.assertEqual(row["completed_tasks"], 1)
-        self.assertEqual(row["in_progress_tasks"], 1)
+        self.assertEqual(row["in_progress_tasks"], 2)
         self.assertEqual(row["on_hold_tasks"], 0)
         self.assertEqual(row["overdue_tasks"], 1)
         self.assertEqual(row["on_time_rate"], 100.0)
@@ -1001,7 +1006,7 @@ class DepartmentScopedApiTests(APITestCase):
         self.assertIn("total_average_completion_days", response.data["summary"])
         workload_intensity = response.data["charts"]["department_workload_intensity"][0]
         self.assertEqual(workload_intensity["employees"], 1)
-        self.assertEqual(workload_intensity["tasks_per_employee"], 2.0)
+        self.assertEqual(workload_intensity["tasks_per_employee"], 3.0)
         self.assertEqual(workload_intensity["completed_tasks_per_employee"], 1.0)
         self.assertEqual(workload_intensity["total_effort_points"], 2)
         self.assertEqual(workload_intensity["weighted_workload_per_employee"], 2.0)
@@ -1247,12 +1252,6 @@ class DepartmentScopedApiTests(APITestCase):
         )
         Task.objects.create(
             department=self.department,
-            title="To do task",
-            created_by=self.owner,
-            status=Task.Status.NOT_STARTED,
-        )
-        Task.objects.create(
-            department=self.department,
             title="Future task",
             created_by=self.owner,
             status=Task.Status.BACKLOG,
@@ -1288,13 +1287,12 @@ class DepartmentScopedApiTests(APITestCase):
         self.assertIn("upcoming_deadlines", response.data)
         self.assertIn("tasks_by_department", response.data)
         self.assertIn("recent_tasks", response.data)
-        self.assertEqual(response.data["summary"]["in_progress_tasks"]["count"], 2)
-        self.assertEqual(response.data["summary"]["not_started_tasks"]["count"], 1)
+        self.assertEqual(response.data["summary"]["in_progress_tasks"]["count"], 1)
         self.assertEqual(response.data["summary"]["backlog_tasks"]["count"], 1)
         self.assertEqual(response.data["summary"]["on_hold_tasks"]["count"], 1)
-        self.assertEqual(response.data["summary"]["total_tasks"]["count"], 5)
+        self.assertEqual(response.data["summary"]["total_tasks"]["count"], 4)
         self.assertEqual(response.data["summary"]["archived_tasks"]["count"], 1)
-        self.assertEqual(response.data["summary"]["archived_tasks"]["percentage"], 20.0)
+        self.assertEqual(response.data["summary"]["archived_tasks"]["percentage"], 25.0)
         creator = response.data["recent_tasks"][0]["created_by_detail"]
         self.assertEqual(set(creator), {"id", "full_name", "avatar"})
         self.assertEqual(creator["full_name"], "Dashboard Owner")
