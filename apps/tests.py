@@ -1023,6 +1023,36 @@ class DepartmentScopedApiTests(APITestCase):
         self.assertEqual(averages[str(self.member.pk)], 0.5)
         self.assertEqual(averages[str(second_member.pk)], 1.5)
 
+    def test_staff_performance_defaults_to_most_assigned_tasks_first(self):
+        second_member = User.objects.create_user(
+            username="most-assigned-member",
+            email="most-assigned@example.com",
+            password="pass12345",
+            department=self.department,
+        )
+        today = timezone.localdate()
+
+        for index, assignee in enumerate((self.member, second_member, second_member)):
+            task = Task.objects.create(
+                department=self.department,
+                title=f"Assigned ordering {index}",
+                created_by=self.owner,
+                status=Task.Status.IN_PROGRESS,
+                due_date=today,
+            )
+            task.assignees.add(assignee)
+
+        response = self.client.get("/api/v1/analytics/", {
+            "department": self.department.pk,
+            "days": 7,
+        })
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        rows = response.data["staff_performance"]["results"]
+        self.assertEqual(rows[0]["employee"]["id"], str(second_member.pk))
+        self.assertEqual([row["assigned_tasks"] for row in rows[:2]], [2, 1])
+        self.assertEqual(response.data["meta"]["applied_filters"]["ordering"], "-assigned")
+
     def test_completed_status_synchronizes_completion_fields_for_every_save_path(self):
         task = Task.objects.create(
             department=self.department,

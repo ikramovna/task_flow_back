@@ -477,7 +477,8 @@ class AnalyticsView(APIView):
             OpenApiParameter("staff_filter", OpenApiTypes.STR, OpenApiParameter.QUERY, required=False,
                              enum=["all", "top_performers", "needs_attention"], default="all"),
             OpenApiParameter("ordering", OpenApiTypes.STR, OpenApiParameter.QUERY, required=False,
-                             description="Staff ordering: performance, assigned, completed, in_progress, overdue, on_time, avg_time or name. Prefix with '-' for descending."),
+                             default="-assigned",
+                             description="Staff ordering: performance, assigned, completed, in_progress, overdue, on_time, avg_time or name. Defaults to most assigned tasks first; prefix with '-' for descending."),
             OpenApiParameter("page", OpenApiTypes.INT, OpenApiParameter.QUERY, required=False, default=1),
             OpenApiParameter("page_size", OpenApiTypes.INT, OpenApiParameter.QUERY, required=False, default=8),
         ],
@@ -805,7 +806,7 @@ class AnalyticsView(APIView):
         elif staff_filter == "needs_attention":
             filtered_staff_rows = [row for row in filtered_staff_rows if row["performance_level"] in ("needs_improvement", "critical")]
 
-        ordering = params.get("ordering", "-performance")
+        ordering = params.get("ordering", "-assigned")
         ordering_fields = {"performance": "performance_score", "assigned": "assigned_tasks", "completed": "completed_tasks",
                            "in_progress": "in_progress_tasks", "overdue": "overdue_tasks", "on_time": "on_time_rate",
                            "avg_time": "avg_completion_days", "name": "employee"}
