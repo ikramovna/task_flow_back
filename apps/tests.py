@@ -1064,6 +1064,20 @@ class DepartmentScopedApiTests(APITestCase):
             [2, 1],
         )
 
+        # Legacy frontend builds may still send this value; assigned-task ranking
+        # remains authoritative.
+        response = self.client.get("/api/v1/analytics/", {
+            "department": self.department.pk,
+            "days": 7,
+            "ordering": "-performance",
+        })
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            [row["assigned_tasks"] for row in response.data["staff_performance"]["results"][:2]],
+            [2, 1],
+        )
+        self.assertEqual(response.data["meta"]["applied_filters"]["ordering"], "-assigned")
+
     def test_completed_status_synchronizes_completion_fields_for_every_save_path(self):
         task = Task.objects.create(
             department=self.department,

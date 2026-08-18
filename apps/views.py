@@ -476,9 +476,6 @@ class AnalyticsView(APIView):
                              enum=["outstanding", "excellent", "good", "needs_improvement", "critical", "not_rated"]),
             OpenApiParameter("staff_filter", OpenApiTypes.STR, OpenApiParameter.QUERY, required=False,
                              enum=["all", "top_performers", "needs_attention"], default="all"),
-            OpenApiParameter("ordering", OpenApiTypes.STR, OpenApiParameter.QUERY, required=False,
-                             default="-assigned",
-                             description="Staff ordering: performance, assigned, completed, in_progress, overdue, on_time, avg_time or name. Defaults to most assigned tasks first; prefix with '-' for descending."),
             OpenApiParameter("page", OpenApiTypes.INT, OpenApiParameter.QUERY, required=False, default=1),
             OpenApiParameter("page_size", OpenApiTypes.INT, OpenApiParameter.QUERY, required=False, default=8),
         ],
@@ -806,25 +803,13 @@ class AnalyticsView(APIView):
         elif staff_filter == "needs_attention":
             filtered_staff_rows = [row for row in filtered_staff_rows if row["performance_level"] in ("needs_improvement", "critical")]
 
-        # Frontends commonly serialize an unselected dropdown as `ordering=`.
-        # Treat both a missing and an empty value as the assigned-task default.
-        ordering = params.get("ordering") or "-assigned"
-        ordering_fields = {"performance": "performance_score", "assigned": "assigned_tasks", "completed": "completed_tasks",
-                           "in_progress": "in_progress_tasks", "overdue": "overdue_tasks", "on_time": "on_time_rate",
-                           "avg_time": "avg_completion_days", "name": "employee"}
-        descending = ordering.startswith("-")
-        ordering_name = ordering.lstrip("-")
-        if ordering_name not in ordering_fields:
-            return Response({"ordering": "Invalid staff ordering."}, status=status.HTTP_400_BAD_REQUEST)
-        ordering_key = ordering_fields[ordering_name]
-        if ordering_key == "employee":
-            filtered_staff_rows.sort(key=lambda row: row["employee"]["full_name"].casefold(), reverse=descending)
-        else:
-            filtered_staff_rows.sort(
-                key=lambda row: (row[ordering_key] if row[ordering_key] is not None else -1,
-                                 row["employee"]["full_name"].casefold()),
-                reverse=descending,
-            )
+        # Staff performance is always ranked by assigned task volume, highest first.
+        # This intentionally ignores legacy `ordering=-performance` values still
+        # sent by older frontend builds.
+        ordering = "-assigned"
+        filtered_staff_rows.sort(
+            key=lambda row: (-row["assigned_tasks"], row["employee"]["full_name"].casefold())
+        )
         try:
             page = int(params.get("page", 1))
             page_size = int(params.get("page_size", 8))
