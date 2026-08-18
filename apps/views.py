@@ -11,7 +11,7 @@ from django.contrib.auth.tokens import default_token_generator
 from django.template.loader import render_to_string
 from django.http import FileResponse
 from django.db import transaction
-from django.db.models import Count, F, Prefetch, Q
+from django.db.models import Count, F, Prefetch, Q, Sum
 from django.db.models.functions import TruncDate, TruncMonth, TruncWeek
 from django.utils import timezone
 from django.utils.encoding import force_bytes
@@ -661,14 +661,34 @@ class AnalyticsView(APIView):
 
         department_rows = current.values("department_id", "department__name").annotate(
             total=Count("id", distinct=True),
+            total_effort_points=Sum("effort_score"),
             completed=Count("id", filter=Q(completed_at__date__range=(start_date, end_date)), distinct=True),
             in_progress=Count("id", filter=Q(status=Task.Status.IN_PROGRESS), distinct=True),
+            on_hold=Count("id", filter=Q(status=Task.Status.ON_HOLD, is_archived=False), distinct=True),
             overdue=Count("id", filter=Q(due_date__lt=end_date) & (Q(completed_at__isnull=True) | Q(completed_at__date__gt=end_date)), distinct=True),
         ).order_by("department__name")
-        department_performance = [{"department_id": str(row["department_id"]), "department_name": row["department__name"],
-                                   "completed": row["completed"], "in_progress": row["in_progress"],
-                                   "overdue": row["overdue"], "total": row["total"],
-                                   "completion_rate": pct(row["completed"], row["total"])} for row in department_rows]
+        employee_counts = dict(
+            employees.values_list("department_id").annotate(count=Count("id", distinct=True))
+        )
+        department_performance = []
+        for row in department_rows:
+            employee_count = employee_counts.get(row["department_id"], 0)
+            department_performance.append({
+                "department_id": str(row["department_id"]),
+                "department_name": row["department__name"],
+                "employees": employee_count,
+                "total": row["total"],
+                "total_effort_points": row["total_effort_points"] or 0,
+                "completed": row["completed"],
+                "in_progress": row["in_progress"],
+                "on_hold": row["on_hold"],
+                "overdue": row["overdue"],
+                "tasks_per_employee": round(row["total"] / employee_count, 1) if employee_count else 0.0,
+                "completed_tasks_per_employee": round(row["completed"] / employee_count, 1) if employee_count else 0.0,
+                "weighted_workload_per_employee": round((row["total_effort_points"] or 0) / employee_count, 1) if employee_count else 0.0,
+                "completion_rate": pct(row["completed"], row["total"]),
+                "overdue_rate": pct(row["overdue"], row["total"]),
+            })
 
         workload_rows = current.values("assignees__id", "assignees__first_name", "assignees__last_name", "assignees__avatar").exclude(
             assignees__id=None).annotate(active=Count("id", filter=~Q(status=Task.Status.COMPLETED), distinct=True),
@@ -732,8 +752,10 @@ class AnalyticsView(APIView):
             for employee in staff:
                 employee_tasks = [task for task, ids in memberships if str(employee.id) in ids]
                 assigned = len(employee_tasks)
+                assigned_effort_points = sum(task.effort_score for task in employee_tasks)
                 completed_tasks = [task for task in employee_tasks if task.completed_at and period_start <= task.completed_at.date() <= period_end]
                 in_progress = sum(task.status == Task.Status.IN_PROGRESS for task in employee_tasks)
+                on_hold = sum(task.status == Task.Status.ON_HOLD and not task.is_archived for task in employee_tasks)
                 overdue = sum(
                     bool(task.due_date and task.due_date < period_end and (not task.completed_at or task.completed_at.date() > period_end))
                     for task in employee_tasks
@@ -765,7 +787,9 @@ class AnalyticsView(APIView):
                                  "email": employee.email, "avatar": request.build_absolute_uri(employee.avatar.url) if employee.avatar else None,
                                  "job_title": employee.job_title},
                     "department": {"id": str(employee.department_id), "name": employee.department.name} if employee.department else None,
-                    "assigned_tasks": assigned, "completed_tasks": len(completed_tasks), "in_progress_tasks": in_progress,
+                    "assigned_tasks": assigned, "assigned_effort_points": assigned_effort_points,
+                    "completed_tasks": len(completed_tasks), "in_progress_tasks": in_progress,
+                    "on_hold_tasks": on_hold,
                     "overdue_tasks": overdue, "on_time_rate": on_time_rate,
                     "avg_completion_days": round(sum(durations) / len(durations), 1) if durations else 0.0,
                     "completion_rate": completion_rate, "overdue_control": overdue_control,
@@ -828,21 +852,61 @@ class AnalyticsView(APIView):
         previous_average_performance = round(sum(previous_scored) / len(previous_scored), 1) if previous_scored else 0.0
         current_staff_count = len(staff)
         previous_staff_count = sum(employee.date_joined.date() <= previous_end for employee in staff)
+        total_effort_points = current.aggregate(total=Sum("effort_score"))["total"] or 0
+        workload_kpis = {
+            "tasks_per_employee": {
+                "value": round(status_total / current_staff_count, 1) if current_staff_count else 0.0,
+                "unit": "tasks_per_employee",
+                "total_tasks": status_total,
+                "employees": current_staff_count,
+            },
+            "completed_tasks_per_employee": {
+                "value": round(current_stats["done"] / current_staff_count, 1) if current_staff_count else 0.0,
+                "unit": "tasks_per_employee",
+                "completed_tasks": current_stats["done"],
+                "employees": current_staff_count,
+            },
+            "completion_rate": {
+                "value": pct(current_stats["done"], status_total),
+                "unit": "percent",
+                "completed_tasks": current_stats["done"],
+                "total_tasks": status_total,
+            },
+            "overdue_rate": {
+                "value": pct(current_stats["overdue"], status_total),
+                "unit": "percent",
+                "overdue_tasks": current_stats["overdue"],
+                "total_tasks": status_total,
+            },
+            "weighted_workload_per_employee": {
+                "value": round(total_effort_points / current_staff_count, 1) if current_staff_count else 0.0,
+                "unit": "effort_points_per_employee",
+                "total_effort_points": total_effort_points,
+                "employees": current_staff_count,
+            },
+        }
+        analytics_cards = [
+            {"key": "total_average_performance", "label": "Total Average Performance",
+             "value": average_performance, "unit": "percent"},
+            {"key": "total_average_on_time", "label": "Total Average On-time",
+             "value": current_stats["on_time_rate"], "unit": "percent"},
+            {"key": "total_average_completion_days", "label": "Total Average Time",
+             "value": current_stats["avg_completion_days"], "unit": "days"},
+            {"key": "tasks_per_employee", "label": "Tasks per Employee",
+             **workload_kpis["tasks_per_employee"]},
+            {"key": "overdue_rate", "label": "Overdue Rate",
+             **workload_kpis["overdue_rate"]},
+            {"key": "weighted_workload_per_employee", "label": "Weighted Workload per Employee",
+             **workload_kpis["weighted_workload_per_employee"]},
+        ]
 
-        performance_trend = []
-        cursor = start_date
-        while cursor <= end_date:
-            eligible_to_date = [task for task in current_task_list if task.due_date and start_date <= task.due_date <= cursor]
-            completed_to_date = [task for task in eligible_to_date if task.completed_at and task.completed_at.date() <= cursor]
-            overdue_to_date = [task for task in eligible_to_date if task.due_date < cursor and
-                               (not task.completed_at or task.completed_at.date() > cursor)]
-            on_time_to_date = [task for task in completed_to_date if task.completed_at.date() <= task.due_date]
-            trend_completion = pct(len(completed_to_date), len(eligible_to_date))
-            trend_on_time = pct(len(on_time_to_date), len(completed_to_date))
-            trend_overdue_control = 100.0 - pct(len(overdue_to_date), len(eligible_to_date)) if eligible_to_date else 0.0
-            trend_score = round(trend_completion * .45 + trend_on_time * .35 + trend_overdue_control * .20) if eligible_to_date else 0
-            performance_trend.append({"date": cursor, "value": trend_score})
-            cursor += timedelta(days=step)
+        # This chart now compares task activity instead of a derived score.
+        # There is no assignment-history timestamp yet, so created_at is used as
+        # the initial assignment date.
+        performance_trend = [
+            {"date": item["date"], "assigned": item["created"], "completed": item["completed"]}
+            for item in sorted(trend.values(), key=lambda item: item["date"])
+        ]
 
         response = {
             "meta": {"start_date": start_date, "end_date": end_date, "previous_start_date": previous_start,
@@ -863,8 +927,13 @@ class AnalyticsView(APIView):
                                                                {"value": "critical", "label": "Critical"},
                                                                {"value": "not_rated", "label": "Not Rated"}]}},
             "summary": {
+                "cards": analytics_cards,
+                "workload_kpis": workload_kpis,
                 "total_staff": {"value": current_staff_count, "unit": "staff", "change": change(current_staff_count, previous_staff_count)},
                 "average_performance": {"value": average_performance, "unit": "percent", "change": change(average_performance, previous_average_performance)},
+                "total_average_performance": {"value": average_performance, "unit": "percent", "change": change(average_performance, previous_average_performance)},
+                "total_average_on_time": {"value": current_stats["on_time_rate"], "unit": "percent", "change": change(current_stats["on_time_rate"], previous_stats["on_time_rate"])},
+                "total_average_completion_days": {"value": current_stats["avg_completion_days"], "unit": "days", "change": change(current_stats["avg_completion_days"], previous_stats["avg_completion_days"], True)},
                 "task_completion_rate": {"value": current_stats["completion_rate"], "unit": "percent", "change": change(current_stats["completion_rate"], previous_stats["completion_rate"])},
                 "active_tasks": {"value": current_stats["active"], "unit": "tasks"},
                 "completed_tasks": {"value": current_stats["completed"], "unit": "tasks"},
@@ -878,8 +947,13 @@ class AnalyticsView(APIView):
             },
             "charts": {"task_completion_trend": sorted(trend.values(), key=lambda item: item["date"]),
                        "performance_trend": performance_trend,
+                       "performance_trend_series": [
+                           {"key": "completed", "label": "Completed", "color": "#34D399"},
+                           {"key": "assigned", "label": "Assigned", "color": "#EF4444"},
+                       ],
                        "task_status": {"total": status_total, "items": status_chart},
                        "department_performance": department_performance, "team_workload": workload,
+                       "department_workload_intensity": department_performance,
                        "workload_distribution": department_performance,
                        "tasks_by_priority": {"total": status_total, "items": priority_chart},
                        "overdue_trend": overdue_trend},

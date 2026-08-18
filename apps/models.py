@@ -109,6 +109,11 @@ class Task(TimeStampedModel):
         blank=True,
     )
     progress = models.PositiveSmallIntegerField(default=0, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    effort_score = models.PositiveSmallIntegerField(
+        default=1,
+        validators=[MinValueValidator(1), MaxValueValidator(5)],
+        help_text="Relative task complexity/effort from 1 (small) to 5 (very large).",
+    )
 
     class Meta:
         ordering = ["due_date", "-created_at"]

@@ -107,7 +107,7 @@ class TaskSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Task
-        fields = ("id", "department", "title", "description", "status", "priority", "category", "assignees", "assignee_details", "main_assignee", "main_assignee_detail", "created_by", "created_by_detail", "due_date", "completed_at", "is_hidden", "is_archived", "archived_at", "archived_by", "progress", "created_at", "updated_at")
+        fields = ("id", "department", "title", "description", "status", "priority", "category", "effort_score", "assignees", "assignee_details", "main_assignee", "main_assignee_detail", "created_by", "created_by_detail", "due_date", "completed_at", "is_hidden", "is_archived", "archived_at", "archived_by", "progress", "created_at", "updated_at")
         extra_kwargs = {"department": {"required": False}}
         read_only_fields = ("main_assignee", "created_by", "completed_at", "is_archived", "archived_at", "archived_by")
 

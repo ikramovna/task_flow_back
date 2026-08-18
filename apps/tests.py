@@ -972,6 +972,12 @@ class DepartmentScopedApiTests(APITestCase):
         self.assertEqual(response.data["summary"]["task_completion_rate"]["value"], 50.0)
         self.assertIn("average_performance", response.data["summary"])
         self.assertTrue(response.data["charts"]["performance_trend"])
+        trend_item = response.data["charts"]["performance_trend"][0]
+        self.assertEqual(set(trend_item), {"date", "assigned", "completed"})
+        self.assertEqual(
+            [series["key"] for series in response.data["charts"]["performance_trend_series"]],
+            ["completed", "assigned"],
+        )
         distribution = response.data["charts"]["workload_distribution"][0]
         self.assertEqual((distribution["completed"], distribution["in_progress"], distribution["overdue"]), (1, 1, 1))
         staff = response.data["staff_performance"]
@@ -980,14 +986,44 @@ class DepartmentScopedApiTests(APITestCase):
         self.assertEqual(row["employee"]["full_name"], "Aziza Karimova")
         self.assertEqual(row["employee"]["job_title"], "Backend Engineer")
         self.assertEqual(row["assigned_tasks"], 2)
+        self.assertEqual(row["assigned_effort_points"], 2)
         self.assertEqual(row["completed_tasks"], 1)
         self.assertEqual(row["in_progress_tasks"], 1)
+        self.assertEqual(row["on_hold_tasks"], 0)
         self.assertEqual(row["overdue_tasks"], 1)
         self.assertEqual(row["on_time_rate"], 100.0)
         self.assertEqual(row["performance_score"], 68)
         self.assertEqual(row["performance_level"], "needs_improvement")
         self.assertEqual(row["performance_eligible_tasks"], 2)
         self.assertEqual(row["overdue_control"], 50.0)
+        self.assertIn("total_average_performance", response.data["summary"])
+        self.assertIn("total_average_on_time", response.data["summary"])
+        self.assertIn("total_average_completion_days", response.data["summary"])
+        workload_intensity = response.data["charts"]["department_workload_intensity"][0]
+        self.assertEqual(workload_intensity["employees"], 1)
+        self.assertEqual(workload_intensity["tasks_per_employee"], 2.0)
+        self.assertEqual(workload_intensity["completed_tasks_per_employee"], 1.0)
+        self.assertEqual(workload_intensity["total_effort_points"], 2)
+        self.assertEqual(workload_intensity["weighted_workload_per_employee"], 2.0)
+        self.assertEqual(workload_intensity["completion_rate"], 50.0)
+        self.assertEqual(workload_intensity["overdue_rate"], 50.0)
+        workload_kpis = response.data["summary"]["workload_kpis"]
+        self.assertEqual(workload_kpis["tasks_per_employee"]["value"], 2.0)
+        self.assertEqual(workload_kpis["completed_tasks_per_employee"]["value"], 1.0)
+        self.assertEqual(workload_kpis["completion_rate"]["value"], 50.0)
+        self.assertEqual(workload_kpis["overdue_rate"]["value"], 50.0)
+        self.assertEqual(workload_kpis["weighted_workload_per_employee"]["value"], 2.0)
+        self.assertEqual(
+            [card["key"] for card in response.data["summary"]["cards"]],
+            [
+                "total_average_performance",
+                "total_average_on_time",
+                "total_average_completion_days",
+                "tasks_per_employee",
+                "overdue_rate",
+                "weighted_workload_per_employee",
+            ],
+        )
 
     def test_staff_average_completion_time_uses_each_employees_exact_duration(self):
         second_member = User.objects.create_user(
