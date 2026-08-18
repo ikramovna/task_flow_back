@@ -806,7 +806,9 @@ class AnalyticsView(APIView):
         elif staff_filter == "needs_attention":
             filtered_staff_rows = [row for row in filtered_staff_rows if row["performance_level"] in ("needs_improvement", "critical")]
 
-        ordering = params.get("ordering", "-assigned")
+        # Frontends commonly serialize an unselected dropdown as `ordering=`.
+        # Treat both a missing and an empty value as the assigned-task default.
+        ordering = params.get("ordering") or "-assigned"
         ordering_fields = {"performance": "performance_score", "assigned": "assigned_tasks", "completed": "completed_tasks",
                            "in_progress": "in_progress_tasks", "overdue": "overdue_tasks", "on_time": "on_time_rate",
                            "avg_time": "avg_completion_days", "name": "employee"}
