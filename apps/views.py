@@ -541,8 +541,10 @@ class AnalyticsView(APIView):
                 | Q(job_title__icontains=search)
             )
 
+        # Archived tasks are hidden from the operational Kanban, but analytics is
+        # historical: verified work must remain visible in the selected period.
         universe = visible_tasks_for(
-            Task.objects.filter(is_archived=False, department__in=departments), request.user
+            Task.objects.filter(department__in=departments), request.user
         )
         if request.user.role not in PRIVILEGED_TASK_ROLES:
             universe = universe.filter(assignees=request.user)
@@ -598,18 +600,30 @@ class AnalyticsView(APIView):
             return {"value": value, "direction": "down" if value < 0 else "up" if value > 0 else "flat",
                     "is_positive": value <= 0 if lower_is_better else value >= 0}
 
+        accountable_statuses = (Task.Status.IN_PROGRESS, Task.Status.COMPLETED)
+
         def snapshot(qs, period_start, as_of):
-            total = qs.count()
-            completed_qs = qs.filter(completed_at__date__range=(period_start, as_of))
-            completed_count = completed_qs.count()
+            # Completion rate = (Completed + Archived) / (Active + Completed + Archived).
+            # On Hold, Backlog/Postponed and Not Started are informational only.
+            accountable_qs = qs.filter(status__in=accountable_statuses)
+            completed_qs = accountable_qs.filter(
+                status=Task.Status.COMPLETED,
+                completed_at__date__range=(period_start, as_of),
+            )
+            completed_count = completed_qs.filter(is_archived=False).count()
+            archived_count = completed_qs.filter(is_archived=True).count()
+            active_count = accountable_qs.filter(status=Task.Status.IN_PROGRESS).count()
+            total = active_count + completed_count + archived_count
             overdue_count = qs.filter(due_date__lt=as_of).filter(
                 Q(completed_at__isnull=True) | Q(completed_at__date__gt=as_of)
             ).count()
             on_time = completed_qs.filter(Q(due_date__isnull=True) | Q(completed_at__date__lte=F("due_date"))).count()
             durations = [completion_days(task)
                          for task in completed_qs.only("created_at", "completed_at") if task.completed_at]
-            return {"total": total, "completed": completed_count, "completion_rate": pct(completed_count, total),
-                    "on_time_rate": pct(on_time, completed_count), "overdue": overdue_count,
+            return {"total": total, "active": active_count, "completed": completed_count,
+                    "archived": archived_count, "done": completed_count + archived_count,
+                    "completion_rate": pct(completed_count + archived_count, total),
+                    "on_time_rate": pct(on_time, completed_count + archived_count), "overdue": overdue_count,
                     "overdue_rate": pct(overdue_count, total),
                     "avg_completion_days": round(sum(durations) / len(durations), 1) if durations else 0.0}
 
@@ -633,15 +647,19 @@ class AnalyticsView(APIView):
             key = row["period"].date() if isinstance(row["period"], datetime) else row["period"]
             trend.setdefault(key, {"date": key, "created": 0, "completed": 0})["completed"] = row["completed"]
 
-        status_counts = dict(current.values_list("status").annotate(count=Count("id", distinct=True)))
+        status_counts = dict(current.filter(is_archived=False).values_list("status").annotate(count=Count("id", distinct=True)))
+        archived_count = current.filter(is_archived=True, status=Task.Status.COMPLETED).count()
+        status_total = current.count()
         priority_counts = dict(current.values_list("priority").annotate(count=Count("id", distinct=True)))
         status_chart = [{"key": key, "label": label, "count": status_counts.get(key, 0),
-                         "percentage": pct(status_counts.get(key, 0), current_stats["total"])} for key, label in Task.Status.choices]
+                         "percentage": pct(status_counts.get(key, 0), status_total)} for key, label in Task.Status.choices]
+        status_chart.append({"key": "archived", "label": "Verified & Archived", "count": archived_count,
+                             "percentage": pct(archived_count, status_total)})
         priority_chart = [{"key": key, "label": label, "count": priority_counts.get(key, 0),
-                           "percentage": pct(priority_counts.get(key, 0), current_stats["total"])} for key, label in Task.Priority.choices]
+                           "percentage": pct(priority_counts.get(key, 0), status_total)} for key, label in Task.Priority.choices]
         no_priority = current.filter(priority="").count()
         priority_chart.append({"key": "no_priority", "label": "No Priority", "count": no_priority,
-                               "percentage": pct(no_priority, current_stats["total"])})
+                               "percentage": pct(no_priority, status_total)})
 
         department_rows = current.values("department_id", "department__name").annotate(
             total=Count("id", distinct=True),
@@ -726,7 +744,8 @@ class AnalyticsView(APIView):
 
                 eligible_tasks = [
                     task for task in employee_tasks
-                    if task.due_date and period_start <= task.due_date <= period_end
+                    if task.status in accountable_statuses
+                    and task.due_date and period_start <= task.due_date <= period_end
                 ]
                 eligible_completed = [
                     task for task in eligible_tasks
@@ -859,6 +878,11 @@ class AnalyticsView(APIView):
                 "total_staff": {"value": current_staff_count, "unit": "staff", "change": change(current_staff_count, previous_staff_count)},
                 "average_performance": {"value": average_performance, "unit": "percent", "change": change(average_performance, previous_average_performance)},
                 "task_completion_rate": {"value": current_stats["completion_rate"], "unit": "percent", "change": change(current_stats["completion_rate"], previous_stats["completion_rate"])},
+                "active_tasks": {"value": current_stats["active"], "unit": "tasks"},
+                "completed_tasks": {"value": current_stats["completed"], "unit": "tasks"},
+                "archived_tasks": {"value": current_stats["archived"], "unit": "tasks", "label": "Verified & Archived"},
+                "on_hold_tasks": {"value": current.filter(is_archived=False, status=Task.Status.ON_HOLD).count(), "unit": "tasks"},
+                "postponed_tasks": {"value": current.filter(is_archived=False, status=Task.Status.BACKLOG).count(), "unit": "tasks"},
                 "on_time_completion": {"value": current_stats["on_time_rate"], "unit": "percent", "change": change(current_stats["on_time_rate"], previous_stats["on_time_rate"])},
                 "overdue_rate": {"value": current_stats["overdue_rate"], "unit": "percent", "count": current_stats["overdue"], "change": change(current_stats["overdue_rate"], previous_stats["overdue_rate"], True)},
                 "avg_completion_time": {"value": current_stats["avg_completion_days"], "unit": "days", "change": change(current_stats["avg_completion_days"], previous_stats["avg_completion_days"], True)},
@@ -866,10 +890,10 @@ class AnalyticsView(APIView):
             },
             "charts": {"task_completion_trend": sorted(trend.values(), key=lambda item: item["date"]),
                        "performance_trend": performance_trend,
-                       "task_status": {"total": current_stats["total"], "items": status_chart},
+                       "task_status": {"total": status_total, "items": status_chart},
                        "department_performance": department_performance, "team_workload": workload,
                        "workload_distribution": department_performance,
-                       "tasks_by_priority": {"total": current_stats["total"], "items": priority_chart},
+                       "tasks_by_priority": {"total": status_total, "items": priority_chart},
                        "overdue_trend": overdue_trend},
             "staff_performance": {"count": staff_count, "page": page, "page_size": page_size,
                                   "total_pages": page_count, "next_page": page + 1 if page < page_count else None,

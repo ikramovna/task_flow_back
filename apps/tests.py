@@ -853,6 +853,45 @@ class DepartmentScopedApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["task_completion_rate"], 100)
 
+    def test_analytics_counts_archived_work_and_excludes_paused_tasks_from_rate(self):
+        now = timezone.now()
+
+        def create_tasks(count, status_value, archived=False):
+            for index in range(count):
+                Task.objects.create(
+                    department=self.department,
+                    title=f"{status_value}-{archived}-{index}",
+                    created_by=self.owner,
+                    status=status_value,
+                    is_archived=archived,
+                    completed_at=now if status_value == Task.Status.COMPLETED else None,
+                )
+
+        create_tasks(5, Task.Status.IN_PROGRESS)
+        create_tasks(15, Task.Status.COMPLETED)
+        create_tasks(20, Task.Status.COMPLETED, archived=True)
+        create_tasks(4, Task.Status.ON_HOLD)
+        create_tasks(3, Task.Status.BACKLOG)
+
+        response = self.client.get("/api/v1/analytics/", {
+            "department": self.department.pk,
+            "days": 30,
+        })
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["summary"]["task_completion_rate"]["value"], 87.5)
+        self.assertEqual(response.data["summary"]["active_tasks"]["value"], 5)
+        self.assertEqual(response.data["summary"]["completed_tasks"]["value"], 15)
+        self.assertEqual(response.data["summary"]["archived_tasks"]["value"], 20)
+        self.assertEqual(response.data["summary"]["on_hold_tasks"]["value"], 4)
+        self.assertEqual(response.data["summary"]["postponed_tasks"]["value"], 3)
+        self.assertEqual(response.data["charts"]["task_status"]["total"], 47)
+        archived = next(
+            item for item in response.data["charts"]["task_status"]["items"]
+            if item["key"] == "archived"
+        )
+        self.assertEqual(archived["count"], 20)
+
     def test_analytics_returns_chart_payload_and_applies_filters(self):
         done = Task.objects.create(
             department=self.department,
