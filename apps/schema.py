@@ -13,6 +13,7 @@ class TaskFlowAutoSchema(AutoSchema):
         "members": "Members",
         "tasks": "Tasks",
         "events": "Events",
+        "chat": "Chat",
         "conversations": "Conversations",
         "messages": "Messages",
         "reports": "Reports",

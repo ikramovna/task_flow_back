@@ -9,10 +9,12 @@ router.register("departments", DepartmentViewSet, basename="department")
 router.register("members", MemberViewSet, basename="member")
 router.register("tasks", TaskViewSet, basename="task")
 router.register("events", EventViewSet, basename="event")
-router.register("conversations", ConversationViewSet, basename="conversation")
-router.register("messages", MessageViewSet, basename="message")
 router.register("notifications", NotificationViewSet, basename="notification")
 router.register("reports", ReportViewSet, basename="report")
+
+chat_router = DefaultRouter()
+chat_router.register("conversations", ConversationViewSet, basename="conversation")
+chat_router.register("messages", MessageViewSet, basename="message")
 
 urlpatterns = [
     path("auth/token/", TokenObtainPairView.as_view(), name="token_obtain_pair"),
@@ -30,5 +32,6 @@ urlpatterns = [
     path("me/telegram/", TelegramIntegrationView.as_view(), name="telegram-integration"),
     path("telegram/webhook/", TelegramWebhookView.as_view(), name="telegram-webhook"),
     path("telegram/setup-webhook/", TelegramWebhookSetupView.as_view(), name="telegram-setup-webhook"),
+    path("chat/", include(chat_router.urls)),
     path("", include(router.urls)),
 ]

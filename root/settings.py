@@ -115,9 +115,11 @@ CHANNEL_LAYERS = {
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 
-if os.getenv("DB_ENGINE") == "sqlite":
+DB_ENGINE = os.getenv("DB_ENGINE", "sqlite").strip().lower()
+
+if DB_ENGINE == "sqlite":
     DATABASES = {"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": BASE_DIR / "db.sqlite3"}}
-else:
+elif DB_ENGINE in {"postgres", "postgresql"}:
     DATABASES = {
         "default": {
             "ENGINE": "django.db.backends.postgresql",
@@ -128,6 +130,8 @@ else:
             "PORT": os.getenv("POSTGRES_PORT", "5432"),
         }
     }
+else:
+    raise ValueError("DB_ENGINE must be 'sqlite', 'postgres', or 'postgresql'.")
 
 
 # Password validation

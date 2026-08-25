@@ -47,6 +47,27 @@ paths:
           - week
         description: Trend bucket size; selected automatically when omitted.
       - in: query
+        name: page
+        schema:
+          type: integer
+          default: 1
+      - in: query
+        name: page_size
+        schema:
+          type: integer
+          default: 8
+      - in: query
+        name: performance_level
+        schema:
+          type: string
+          enum:
+          - critical
+          - excellent
+          - good
+          - needs_improvement
+          - not_rated
+          - outstanding
+      - in: query
         name: priority
         schema:
           type: string
@@ -54,6 +75,25 @@ paths:
           - high
           - low
           - medium
+      - in: query
+        name: search
+        schema:
+          type: string
+        description: Search staff by name, email, username or job title.
+      - in: query
+        name: staff_filter
+        schema:
+          type: string
+          enum:
+          - all
+          - needs_attention
+          - top_performers
+          default: all
+      - in: query
+        name: staff_search
+        schema:
+          type: string
+        description: Search only inside the Staff Performance table.
       - in: query
         name: start_date
         schema:
@@ -189,9 +229,9 @@ paths:
               schema:
                 $ref: '#/components/schemas/TokenRefresh'
           description: ''
-  /api/v1/conversations/:
+  /api/v1/chat/conversations/:
     get:
-      operationId: api_v1_conversations_list
+      operationId: api_v1_chat_conversations_list
       parameters:
       - name: ordering
         required: false
@@ -218,7 +258,7 @@ paths:
         schema:
           type: string
       tags:
-      - Conversations
+      - Chat
       security:
       - jwtAuth: []
       responses:
@@ -229,9 +269,9 @@ paths:
                 $ref: '#/components/schemas/PaginatedConversationList'
           description: ''
     post:
-      operationId: api_v1_conversations_create
+      operationId: api_v1_chat_conversations_create
       tags:
-      - Conversations
+      - Chat
       requestBody:
         content:
           application/json:
@@ -252,9 +292,9 @@ paths:
               schema:
                 $ref: '#/components/schemas/Conversation'
           description: ''
-  /api/v1/conversations/{id}/:
+  /api/v1/chat/conversations/{id}/:
     get:
-      operationId: api_v1_conversations_retrieve
+      operationId: api_v1_chat_conversations_retrieve
       parameters:
       - in: path
         name: id
@@ -264,7 +304,7 @@ paths:
         description: A UUID string identifying this conversation.
         required: true
       tags:
-      - Conversations
+      - Chat
       security:
       - jwtAuth: []
       responses:
@@ -275,7 +315,7 @@ paths:
                 $ref: '#/components/schemas/Conversation'
           description: ''
     put:
-      operationId: api_v1_conversations_update
+      operationId: api_v1_chat_conversations_update
       parameters:
       - in: path
         name: id
@@ -285,7 +325,7 @@ paths:
         description: A UUID string identifying this conversation.
         required: true
       tags:
-      - Conversations
+      - Chat
       requestBody:
         content:
           application/json:
@@ -307,7 +347,7 @@ paths:
                 $ref: '#/components/schemas/Conversation'
           description: ''
     patch:
-      operationId: api_v1_conversations_partial_update
+      operationId: api_v1_chat_conversations_partial_update
       parameters:
       - in: path
         name: id
@@ -317,7 +357,7 @@ paths:
         description: A UUID string identifying this conversation.
         required: true
       tags:
-      - Conversations
+      - Chat
       requestBody:
         content:
           application/json:
@@ -339,7 +379,7 @@ paths:
                 $ref: '#/components/schemas/Conversation'
           description: ''
     delete:
-      operationId: api_v1_conversations_destroy
+      operationId: api_v1_chat_conversations_destroy
       parameters:
       - in: path
         name: id
@@ -349,15 +389,15 @@ paths:
         description: A UUID string identifying this conversation.
         required: true
       tags:
-      - Conversations
+      - Chat
       security:
       - jwtAuth: []
       responses:
         '204':
           description: No response body
-  /api/v1/conversations/{id}/mark_read/:
+  /api/v1/chat/conversations/{id}/mark_read/:
     post:
-      operationId: api_v1_conversations_mark_read_create
+      operationId: api_v1_chat_conversations_mark_read_create
       parameters:
       - in: path
         name: id
@@ -367,7 +407,7 @@ paths:
         description: A UUID string identifying this conversation.
         required: true
       tags:
-      - Conversations
+      - Chat
       requestBody:
         content:
           application/json:
@@ -388,6 +428,173 @@ paths:
               schema:
                 $ref: '#/components/schemas/Conversation'
           description: ''
+  /api/v1/chat/messages/:
+    get:
+      operationId: api_v1_chat_messages_list
+      parameters:
+      - in: query
+        name: conversation
+        schema:
+          type: string
+          format: uuid
+      - name: ordering
+        required: false
+        in: query
+        description: Which field to use when ordering the results.
+        schema:
+          type: string
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: page_size
+        required: false
+        in: query
+        description: Number of results to return per page.
+        schema:
+          type: integer
+      tags:
+      - Chat
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedMessageList'
+          description: ''
+    post:
+      operationId: api_v1_chat_messages_create
+      tags:
+      - Chat
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Message'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Message'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Message'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+          description: ''
+  /api/v1/chat/messages/{id}/:
+    get:
+      operationId: api_v1_chat_messages_retrieve
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this message.
+        required: true
+      tags:
+      - Chat
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+          description: ''
+    put:
+      operationId: api_v1_chat_messages_update
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this message.
+        required: true
+      tags:
+      - Chat
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Message'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Message'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Message'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+          description: ''
+    patch:
+      operationId: api_v1_chat_messages_partial_update
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this message.
+        required: true
+      tags:
+      - Chat
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedMessage'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedMessage'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedMessage'
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+          description: ''
+    delete:
+      operationId: api_v1_chat_messages_destroy
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this message.
+        required: true
+      tags:
+      - Chat
+      security:
+      - jwtAuth: []
+      responses:
+        '204':
+          description: No response body
   /api/v1/dashboard/:
     get:
       operationId: api_v1_dashboard_retrieve
@@ -940,6 +1147,43 @@ paths:
               schema:
                 $ref: '#/components/schemas/UserPreference'
           description: ''
+  /api/v1/me/telegram/:
+    get:
+      operationId: api_v1_me_telegram_retrieve
+      tags:
+      - Auth
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: api_v1_me_telegram_create
+      tags:
+      - Auth
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: No response body
+    patch:
+      operationId: api_v1_me_telegram_partial_update
+      tags:
+      - Auth
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: No response body
+    delete:
+      operationId: api_v1_me_telegram_destroy
+      tags:
+      - Auth
+      security:
+      - jwtAuth: []
+      responses:
+        '204':
+          description: No response body
   /api/v1/me/two-factor/:
     patch:
       operationId: api_v1_me_two_factor_partial_update
@@ -1166,173 +1410,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/Member'
           description: ''
-  /api/v1/messages/:
-    get:
-      operationId: api_v1_messages_list
-      parameters:
-      - in: query
-        name: conversation
-        schema:
-          type: string
-          format: uuid
-      - name: ordering
-        required: false
-        in: query
-        description: Which field to use when ordering the results.
-        schema:
-          type: string
-      - name: page
-        required: false
-        in: query
-        description: A page number within the paginated result set.
-        schema:
-          type: integer
-      - name: page_size
-        required: false
-        in: query
-        description: Number of results to return per page.
-        schema:
-          type: integer
-      tags:
-      - Messages
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PaginatedMessageList'
-          description: ''
-    post:
-      operationId: api_v1_messages_create
-      tags:
-      - Messages
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/Message'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/Message'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/Message'
-        required: true
-      security:
-      - jwtAuth: []
-      responses:
-        '201':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Message'
-          description: ''
-  /api/v1/messages/{id}/:
-    get:
-      operationId: api_v1_messages_retrieve
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this message.
-        required: true
-      tags:
-      - Messages
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Message'
-          description: ''
-    put:
-      operationId: api_v1_messages_update
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this message.
-        required: true
-      tags:
-      - Messages
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/Message'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/Message'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/Message'
-        required: true
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Message'
-          description: ''
-    patch:
-      operationId: api_v1_messages_partial_update
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this message.
-        required: true
-      tags:
-      - Messages
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/PatchedMessage'
-          application/x-www-form-urlencoded:
-            schema:
-              $ref: '#/components/schemas/PatchedMessage'
-          multipart/form-data:
-            schema:
-              $ref: '#/components/schemas/PatchedMessage'
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Message'
-          description: ''
-    delete:
-      operationId: api_v1_messages_destroy
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: string
-          format: uuid
-        description: A UUID string identifying this message.
-        required: true
-      tags:
-      - Messages
-      security:
-      - jwtAuth: []
-      responses:
-        '204':
-          description: No response body
   /api/v1/notifications/:
     get:
       operationId: api_v1_notifications_list
@@ -2015,6 +2092,41 @@ paths:
               schema:
                 $ref: '#/components/schemas/Task'
           description: ''
+  /api/v1/tasks/assignees/:
+    get:
+      operationId: api_v1_tasks_assignees_retrieve
+      description: Search company-wide assignees exclusively for task assignment.
+      tags:
+      - Tasks
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+          description: ''
+  /api/v1/telegram/setup-webhook/:
+    post:
+      operationId: api_v1_telegram_setup_webhook_create
+      tags:
+      - Telegram
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/telegram/webhook/:
+    post:
+      operationId: api_v1_telegram_webhook_create
+      tags:
+      - Telegram
+      security:
+      - {}
+      responses:
+        '200':
+          description: No response body
 components:
   schemas:
     AccountDelete:
@@ -2031,6 +2143,7 @@ components:
         meta: {}
         summary: {}
         charts: {}
+        staff_performance: {}
         overdue: {}
         task_completion_rate:
           type: number
@@ -2051,6 +2164,7 @@ components:
       - monthly_progress
       - overdue
       - overdue_tasks
+      - staff_performance
       - summary
       - task_completion_rate
       - tasks_by_category
@@ -2965,6 +3079,11 @@ components:
         category:
           type: string
           maxLength: 80
+        effort_score:
+          type: integer
+          maximum: 5
+          minimum: 1
+          description: Relative task complexity/effort from 1 (small) to 5 (very large).
         assignees:
           type: array
           items:
@@ -3265,6 +3384,11 @@ components:
         category:
           type: string
           maxLength: 80
+        effort_score:
+          type: integer
+          maximum: 5
+          minimum: 1
+          description: Relative task complexity/effort from 1 (small) to 5 (very large).
         assignees:
           type: array
           items:

@@ -1425,7 +1425,7 @@ class NotificationApiTests(APITestCase):
         ConversationParticipant.objects.create(conversation=conversation, user=self.other, is_muted=True)
         conversation.participants.add(self.owner, self.member, self.other)
         response = self.client.post(
-            "/api/v1/messages/", {"conversation": conversation.pk, "body": "Ready to ship"}, format="json"
+            "/api/v1/chat/messages/", {"conversation": conversation.pk, "body": "Ready to ship"}, format="json"
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertTrue(Notification.objects.filter(recipient=self.member, message_id=response.data["id"]).exists())

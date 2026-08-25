@@ -33,8 +33,8 @@ All list endpoints support pagination. Tasks, members and events accept `?depart
 | Calendar | `/api/v1/events/` |
 | Analytics | `GET /api/v1/analytics/?department=<uuid>` |
 | Reports | `/api/v1/reports/` and `/api/v1/reports/<id>/download/` |
-| Conversations | `/api/v1/conversations/` |
-| Messages | `/api/v1/messages/?conversation=<uuid>` |
+| Conversations | `/api/v1/chat/conversations/` |
+| Messages | `/api/v1/chat/messages/?conversation=<uuid>` |
 | Notifications | `/api/v1/notifications/` |
 | Profile | `GET/PATCH /api/v1/me/` |
 | Notifications/appearance | `GET/PATCH /api/v1/me/preferences/` |
