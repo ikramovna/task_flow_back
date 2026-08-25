@@ -1,11 +1,12 @@
 from django.contrib.auth.password_validation import validate_password
+from django.db.models import Avg
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
 from rest_framework import serializers
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 
-from .models import Conversation, ConversationParticipant, Department, Event, Message, Notification, Report, Task, User, UserPreference
+from .models import Conversation, ConversationParticipant, Department, Event, Message, Notification, Project, Report, Task, User, UserPreference
 
 
 class SafeTokenRefreshSerializer(TokenRefreshSerializer):
@@ -113,20 +114,100 @@ class MemberSerializer(serializers.ModelSerializer):
         return getattr(obj, "in_progress_task_count", 0)
 
 
+class ProjectBriefSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Project
+        fields = ("id", "name", "status", "priority")
+
+
+class ProjectSerializer(serializers.ModelSerializer):
+    manager_detail = UserBriefSerializer(source="manager", read_only=True)
+    team_member_details = UserBriefSerializer(source="team_members", many=True, read_only=True)
+    created_by_detail = UserBriefSerializer(source="created_by", read_only=True)
+    progress = serializers.SerializerMethodField()
+    total_tasks = serializers.SerializerMethodField()
+    completed_tasks = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Project
+        fields = (
+            "id", "department", "name", "description", "status", "priority",
+            "category", "start_date", "end_date", "manager", "manager_detail",
+            "team_members", "team_member_details", "progress", "total_tasks",
+            "completed_tasks", "created_by", "created_by_detail", "created_at",
+            "updated_at",
+        )
+        read_only_fields = ("created_by",)
+
+    def validate(self, attrs):
+        department = attrs.get("department", getattr(self.instance, "department", None))
+        start_date = attrs.get("start_date", getattr(self.instance, "start_date", None))
+        end_date = attrs.get("end_date", getattr(self.instance, "end_date", None))
+        if start_date and end_date and end_date < start_date:
+            raise serializers.ValidationError({"end_date": "End date cannot be before start date."})
+
+        users = list(
+            attrs.get(
+                "team_members",
+                self.instance.team_members.all() if self.instance else [],
+            )
+        )
+        manager = attrs.get("manager", getattr(self.instance, "manager", None))
+        if manager:
+            users.append(manager)
+        for user in users:
+            if not user.is_active:
+                raise serializers.ValidationError({"team_members": "Every project member must be active."})
+            if department and user.department_id != department.id:
+                raise serializers.ValidationError({"team_members": "Every project member must belong to the project department."})
+        return attrs
+
+    def create(self, validated_data):
+        project = super().create(validated_data)
+        if project.manager_id:
+            project.team_members.add(project.manager)
+        return project
+
+    def update(self, instance, validated_data):
+        project = super().update(instance, validated_data)
+        if project.manager_id:
+            project.team_members.add(project.manager)
+        return project
+
+    def get_progress(self, obj) -> int:
+        value = getattr(obj, "task_progress", None)
+        if value is None:
+            value = obj.tasks.aggregate(value=Avg("progress"))["value"]
+        return round(value or 0)
+
+    def get_total_tasks(self, obj) -> int:
+        value = getattr(obj, "task_count", None)
+        return value if value is not None else obj.tasks.count()
+
+    def get_completed_tasks(self, obj) -> int:
+        value = getattr(obj, "completed_task_count", None)
+        return value if value is not None else obj.tasks.filter(status=Task.Status.COMPLETED).count()
+
+
 class TaskSerializer(serializers.ModelSerializer):
     assignee_details = UserBriefSerializer(source="assignees", many=True, read_only=True)
     main_assignee_detail = UserBriefSerializer(source="main_assignee", read_only=True)
     created_by_detail = TaskCreatorSerializer(source="created_by", read_only=True)
+    project_detail = ProjectBriefSerializer(source="project", read_only=True)
 
     class Meta:
         model = Task
-        fields = ("id", "department", "title", "description", "status", "priority", "category", "effort_score", "assignees", "assignee_details", "main_assignee", "main_assignee_detail", "created_by", "created_by_detail", "due_date", "completed_at", "is_hidden", "is_archived", "archived_at", "archived_by", "progress", "created_at", "updated_at")
-        extra_kwargs = {"department": {"required": False}}
+        fields = ("id", "department", "project", "project_detail", "title", "description", "status", "priority", "category", "effort_score", "assignees", "assignee_details", "main_assignee", "main_assignee_detail", "created_by", "created_by_detail", "due_date", "completed_at", "is_hidden", "is_archived", "archived_at", "archived_by", "progress", "created_at", "updated_at")
+        extra_kwargs = {"department": {"required": False}, "project": {"required": False, "allow_null": True}}
         read_only_fields = ("main_assignee", "created_by", "completed_at", "is_archived", "archived_at", "archived_by")
 
     def validate(self, attrs):
         assignees = attrs.get("assignees", self.instance.assignees.all() if self.instance else [])
         department = attrs.get("department")
+        project = attrs.get("project", getattr(self.instance, "project", None))
+        if department is None and project is not None:
+            department = project.department
+            attrs["department"] = department
         if department is None and "assignees" in attrs:
             main_assignee = assignees[0] if assignees else None
             department = main_assignee.department if main_assignee else None
@@ -138,6 +219,8 @@ class TaskSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({
                 "assignees": "Select at least one assignee with a department."
             })
+        if project is not None and project.department_id != department.id:
+            raise serializers.ValidationError({"project": "Project must belong to the task department."})
         requester = self.context["request"].user
         assignees_to_validate = assignees if self.instance is None or "assignees" in attrs else []
         for user in assignees_to_validate:

@@ -11,7 +11,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import Conversation, ConversationParticipant, Department, Event, Message, Notification, Task, TelegramIntegration, User, UserPreference
+from .models import Conversation, ConversationParticipant, Department, Event, Message, Notification, Project, Task, TelegramIntegration, User, UserPreference
 from .notifications import generate_deadline_notifications
 
 
@@ -211,9 +211,30 @@ class DepartmentScopedApiTests(APITestCase):
         self.assertEqual(item["code"], "engineering")
         self.assertNotIn("workspace", item)
 
-    def test_project_endpoint_is_removed(self):
-        response = self.client.get("/api/v1/projects/")
-        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+    def test_owner_can_create_project(self):
+        response = self.client.post(
+            "/api/v1/projects/",
+            {
+                "department": self.department.pk,
+                "name": "Website redesign",
+                "priority": Project.Priority.HIGH,
+                "manager": self.owner.pk,
+                "team_members": [self.member.pk],
+                "start_date": "2026-08-25",
+                "end_date": "2026-09-25",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        project = Project.objects.get(pk=response.data["id"])
+        self.assertEqual(project.created_by, self.owner)
+        self.assertSetEqual(
+            set(project.team_members.values_list("pk", flat=True)),
+            {self.owner.pk, self.member.pk},
+        )
+        self.assertEqual(response.data["progress"], 0)
+        self.assertEqual(response.data["total_tasks"], 0)
 
     def test_task_uses_department_directly(self):
         response = self.client.post(
@@ -222,12 +243,34 @@ class DepartmentScopedApiTests(APITestCase):
             format="json",
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
-        self.assertNotIn("project", response.data)
+        self.assertIsNone(response.data["project"])
         self.assertEqual(str(response.data["created_by"]), str(self.owner.pk))
         self.assertEqual(
             set(response.data["created_by_detail"]),
             {"id", "full_name", "avatar"},
         )
+
+    def test_task_can_optionally_belong_to_project(self):
+        project = Project.objects.create(
+            department=self.department,
+            name="Admissions portal",
+            created_by=self.owner,
+        )
+
+        response = self.client.post(
+            "/api/v1/tasks/",
+            {
+                "project": project.pk,
+                "title": "Build application form",
+                "assignees": [self.member.pk],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(str(response.data["project"]), str(project.pk))
+        self.assertEqual(str(response.data["department"]), str(self.department.pk))
+        self.assertEqual(response.data["project_detail"]["name"], project.name)
 
     def test_first_assignee_is_main_and_only_main_can_change_status(self):
         second = User.objects.create_user(

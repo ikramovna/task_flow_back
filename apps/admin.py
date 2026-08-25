@@ -3,7 +3,7 @@ from django.contrib.auth.admin import UserAdmin
 from import_export.admin import ImportExportMixin, ImportExportModelAdmin
 
 from .forms import EventAdminForm
-from .models import Conversation, ConversationParticipant, Department, Event, Message, Notification, Report, Task, TelegramIntegration, User, UserPreference
+from .models import Conversation, ConversationParticipant, Department, Event, Message, Notification, Project, Report, Task, TelegramIntegration, User, UserPreference
 from .resources import (
     ConversationParticipantResource,
     ConversationResource,
@@ -49,12 +49,21 @@ class DepartmentAdmin(ImportExportModelAdmin):
 @admin.register(Task)
 class TaskAdmin(ImportExportModelAdmin):
     resource_classes = (TaskResource,)
-    list_display = ("title", "department", "main_assignee", "status", "priority", "is_hidden", "progress", "due_date", "completed_at", "created_by")
-    list_filter = ("is_hidden", "status", "priority", "department", "due_date")
-    search_fields = ("title", "description", "category", "department__name", "assignees__email")
-    autocomplete_fields = ("department", "assignees", "created_by")
+    list_display = ("title", "department", "project", "main_assignee", "status", "priority", "is_hidden", "progress", "due_date", "completed_at", "created_by")
+    list_filter = ("is_hidden", "status", "priority", "department", "project", "due_date")
+    search_fields = ("title", "description", "category", "department__name", "project__name", "assignees__email")
+    autocomplete_fields = ("department", "project", "assignees", "created_by")
     readonly_fields = ("main_assignee", "created_at", "updated_at", "completed_at")
     date_hierarchy = "due_date"
+
+
+@admin.register(Project)
+class ProjectAdmin(admin.ModelAdmin):
+    list_display = ("name", "department", "manager", "status", "priority", "start_date", "end_date", "created_by")
+    list_filter = ("status", "priority", "department", "start_date", "end_date")
+    search_fields = ("name", "description", "category", "department__name", "manager__email")
+    autocomplete_fields = ("department", "manager", "team_members", "created_by")
+    readonly_fields = ("created_at", "updated_at")
 
 
 @admin.register(Notification)

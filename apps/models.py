@@ -69,6 +69,48 @@ class Department(TimeStampedModel):
         return self.name
 
 
+class Project(TimeStampedModel):
+    class Status(models.TextChoices):
+        PLANNING = "planning", "Planning"
+        ACTIVE = "active", "Active"
+        ON_HOLD = "on_hold", "On Hold"
+        COMPLETED = "completed", "Completed"
+        ARCHIVED = "archived", "Archived"
+
+    class Priority(models.TextChoices):
+        LOW = "low", "Low"
+        MEDIUM = "medium", "Medium"
+        HIGH = "high", "High"
+
+    department = models.ForeignKey(Department, on_delete=models.CASCADE, related_name="projects")
+    name = models.CharField(max_length=220)
+    description = models.TextField(blank=True)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PLANNING)
+    priority = models.CharField(max_length=10, choices=Priority.choices, default=Priority.MEDIUM)
+    category = models.CharField(max_length=80, blank=True)
+    start_date = models.DateField(null=True, blank=True)
+    end_date = models.DateField(null=True, blank=True)
+    manager = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        related_name="managed_projects",
+        null=True,
+        blank=True,
+    )
+    team_members = models.ManyToManyField(User, blank=True, related_name="projects")
+    created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name="created_projects")
+
+    class Meta:
+        ordering = ("end_date", "-created_at")
+        indexes = [
+            models.Index(fields=("department", "status"), name="project_dept_status_idx"),
+            models.Index(fields=("department", "end_date"), name="project_dept_end_idx"),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
 class Task(TimeStampedModel):
     class Status(models.TextChoices):
         BACKLOG = "backlog", "Backlog"
@@ -83,6 +125,13 @@ class Task(TimeStampedModel):
         HIGH = "high", "High"
 
     department = models.ForeignKey(Department, on_delete=models.CASCADE, related_name="tasks")
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.SET_NULL,
+        related_name="tasks",
+        null=True,
+        blank=True,
+    )
     title = models.CharField(max_length=220)
     description = models.TextField(blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.NOT_STARTED)

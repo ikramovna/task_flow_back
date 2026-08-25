@@ -232,6 +232,7 @@ JAZZMIN_SETTINGS = {
         "apps.User": "fas fa-user",
         "apps.Department": "fas fa-sitemap",
         "apps.Task": "fas fa-list-check",
+        "apps.Project": "fas fa-folder-open",
         "apps.Event": "fas fa-calendar-days",
         "apps.UserPreference": "fas fa-sliders",
         "apps.Conversation": "fas fa-comments",
@@ -242,6 +243,7 @@ JAZZMIN_SETTINGS = {
     "order_with_respect_to": [
         "apps",
         "apps.Department",
+        "apps.Project",
         "apps.Task",
         "apps.Event",
         "apps.User",

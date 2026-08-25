@@ -3,11 +3,12 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from .serializers import SafeTokenRefreshSerializer
-from .views import AccountDeleteView, AnalyticsView, ConversationViewSet, DashboardView, DepartmentViewSet, EventViewSet, MemberViewSet, MessageViewSet, NotificationViewSet, PasswordChangeView, PasswordResetConfirmView, PasswordResetRequestView, PreferenceView, ProfileView, ReportViewSet, SupportBotView, TaskViewSet, TelegramIntegrationView, TelegramWebhookSetupView, TelegramWebhookView, TwoFactorView
+from .views import AccountDeleteView, AnalyticsView, ConversationViewSet, DashboardView, DepartmentViewSet, EventViewSet, MemberViewSet, MessageViewSet, NotificationViewSet, PasswordChangeView, PasswordResetConfirmView, PasswordResetRequestView, PreferenceView, ProfileView, ProjectViewSet, ReportViewSet, SupportBotView, TaskViewSet, TelegramIntegrationView, TelegramWebhookSetupView, TelegramWebhookView, TwoFactorView
 
 router = DefaultRouter()
 router.register("departments", DepartmentViewSet, basename="department")
 router.register("members", MemberViewSet, basename="member")
+router.register("projects", ProjectViewSet, basename="project")
 router.register("tasks", TaskViewSet, basename="task")
 router.register("events", EventViewSet, basename="event")
 router.register("notifications", NotificationViewSet, basename="notification")

@@ -29,6 +29,7 @@ All list endpoints support pagination. Tasks, members and events accept `?depart
 | Forgot password | `POST /api/v1/auth/password-reset/` |
 | Reset password | `POST /api/v1/auth/password-reset/confirm/` |
 | Departments | `/api/v1/departments/` |
+| Projects | `/api/v1/projects/` |
 | Dashboard | `GET /api/v1/dashboard/` |
 | Tasks | `/api/v1/tasks/` |
 | Team members | `/api/v1/members/` |
@@ -46,6 +47,10 @@ All list endpoints support pagination. Tasks, members and events accept `?depart
 | Delete account | `POST /api/v1/me/delete-account/` |
 
 Statuses use API-safe values: `not_started`, `in_progress`, `completed`, `at_risk`, `archived`. Priorities are `low`, `medium`, `high`.
+
+Tasks may include an optional `project` UUID. Omitting it creates a standalone
+department task. Project progress and task counts are calculated from the tasks
+linked to that project.
 
 ## Notifications
 

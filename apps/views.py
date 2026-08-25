@@ -11,7 +11,7 @@ from django.contrib.auth.tokens import default_token_generator
 from django.template.loader import render_to_string
 from django.http import FileResponse
 from django.db import transaction
-from django.db.models import Count, F, Prefetch, Q, Sum
+from django.db.models import Avg, Count, F, Prefetch, Q, Sum
 from django.db.models.functions import TruncDate, TruncMonth, TruncWeek
 from django.utils import timezone
 from django.utils.encoding import force_bytes
@@ -28,12 +28,12 @@ from drf_spectacular.types import OpenApiTypes
 from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serializer
 
 from .filters import EventFilter, TaskFilter
-from .models import Conversation, ConversationParticipant, Department, Event, Message, Notification, Report, Task, TelegramIntegration, User, UserPreference
+from .models import Conversation, ConversationParticipant, Department, Event, Message, Notification, Project, Report, Task, TelegramIntegration, User, UserPreference
 from .chat.services import create_message
 from .notifications import notify_task_assigned, notify_task_completed
 from .pagination import StandardPagination
 from .permissions import IsDepartmentMember
-from .serializers import AccountDeleteSerializer, ConversationSerializer, DepartmentSerializer, EventSerializer, MemberSerializer, MessageSerializer, NotificationSerializer, PasswordChangeSerializer, PasswordResetConfirmSerializer, PasswordResetRequestSerializer, ProfileSerializer, ReportSerializer, SupportBotMessageSerializer, TaskCreatorSerializer, TaskSerializer, TwoFactorSerializer, UserBriefSerializer, UserPreferenceSerializer
+from .serializers import AccountDeleteSerializer, ConversationSerializer, DepartmentSerializer, EventSerializer, MemberSerializer, MessageSerializer, NotificationSerializer, PasswordChangeSerializer, PasswordResetConfirmSerializer, PasswordResetRequestSerializer, ProfileSerializer, ProjectSerializer, ReportSerializer, SupportBotMessageSerializer, TaskCreatorSerializer, TaskSerializer, TwoFactorSerializer, UserBriefSerializer, UserPreferenceSerializer
 from .telegram_support import TelegramSupportError, send_support_message
 from .telegram import TelegramError, bot_api, webhook_url
 from .task_visibility import PRIVILEGED_TASK_ROLES, visible_tasks_for
@@ -251,6 +251,59 @@ class DepartmentViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
         instance.delete()
 
 
+class ProjectViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
+    queryset = Project.objects.none()
+    serializer_class = ProjectSerializer
+    filter_backends = (DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter)
+    filterset_fields = ("department", "status", "priority", "category", "manager", "team_members")
+    search_fields = ("name", "description", "category", "manager__first_name", "manager__last_name")
+    ordering_fields = ("name", "start_date", "end_date", "priority", "status", "created_at", "updated_at")
+
+    def get_queryset(self):
+        if getattr(self, "swagger_fake_view", False):
+            return self.queryset
+        queryset = Project.objects.select_related(
+            "department", "manager", "created_by"
+        ).prefetch_related("team_members").annotate(
+            task_count=Count("tasks", distinct=True),
+            completed_task_count=Count(
+                "tasks",
+                filter=Q(tasks__status=Task.Status.COMPLETED),
+                distinct=True,
+            ),
+            task_progress=Avg("tasks__progress"),
+        )
+        queryset = self.scope_departments(queryset)
+        if self.department_id():
+            queryset = queryset.filter(department_id=self.department_id())
+        return queryset.distinct()
+
+    def can_manage(self, department):
+        user = self.request.user
+        return user.is_superuser or (
+            user.is_active
+            and user.role in (User.Role.OWNER, User.Role.ADMIN, User.Role.MANAGER)
+            and user.can_access_department(department)
+        )
+
+    def perform_create(self, serializer):
+        department = serializer.validated_data["department"]
+        if not self.can_manage(department):
+            raise PermissionDenied("Only an Owner, Admin, or Manager can create projects.")
+        serializer.save(created_by=self.request.user)
+
+    def perform_update(self, serializer):
+        department = serializer.validated_data.get("department", serializer.instance.department)
+        if not self.can_manage(department):
+            raise PermissionDenied("Only an Owner, Admin, or Manager can update projects.")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if not self.can_manage(instance.department):
+            raise PermissionDenied("Only an Owner, Admin, or Manager can delete projects.")
+        instance.delete()
+
+
 class TaskViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
     queryset = Task.objects.none()
     serializer_class = TaskSerializer
@@ -259,7 +312,7 @@ class TaskViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
     permission_classes = (IsAuthenticated,)
     filter_backends = (DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter)
     filterset_class = TaskFilter
-    search_fields = ("title", "description", "department__name")
+    search_fields = ("title", "description", "department__name", "project__name")
     ordering_fields = ("title", "due_date", "priority", "status", "created_at", "progress")
 
     def get_queryset(self):
@@ -279,7 +332,7 @@ class TaskViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
                 Q(department=user.department) | Q(pk__in=assigned_task_ids)
             )
         qs = visible_tasks_for(qs, user)
-        qs = qs.select_related("department", "created_by", "main_assignee").prefetch_related("assignees").distinct()
+        qs = qs.select_related("department", "project", "created_by", "main_assignee").prefetch_related("assignees").distinct()
         archived = self.request.query_params.get("archived", "").lower()
         if self.action == "unarchive":
             qs = qs.filter(is_archived=True)
