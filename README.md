@@ -4,6 +4,9 @@ DRF backend for the Tasks, Departments, Analytics, Calendar and Team Members scr
 
 ## Run locally
 
+Create a PostgreSQL database and configure the `POSTGRES_*` variables from
+`.env.example`. PostgreSQL is required; this project does not use SQLite.
+
 ```powershell
 .\.venv312\Scripts\python.exe manage.py migrate
 .\.venv312\Scripts\python.exe manage.py seed_demo
