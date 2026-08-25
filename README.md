@@ -82,6 +82,17 @@ server broadcasts a `message.created` event to every connected participant.
 supported. Unauthorized users are closed with code `4401`; authenticated users
 outside the conversation are closed with `4403`.
 
+On connection the server sends a presence snapshot:
+
+```json
+{"type":"presence.snapshot","users":[{"user_id":"<uuid>","is_online":true,"last_seen":"<iso-datetime>"}]}
+```
+
+Status changes are broadcast to shared conversations as
+`{"type":"presence.changed","user_id":"<uuid>","is_online":false,"last_seen":"<iso-datetime>"}`.
+Presence sessions are heartbeat-backed, so multiple tabs/devices are handled
+without marking a user offline until their final connection closes.
+
 Local development falls back to an in-memory channel layer. Set `REDIS_URL` in
 production so WebSocket events work across multiple Daphne/ASGI workers.
 

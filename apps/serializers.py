@@ -36,7 +36,7 @@ class UserBriefSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = User
-        fields = ("id", "email", "full_name", "avatar", "phone", "job_title", "department", "role", "is_active")
+        fields = ("id", "email", "full_name", "avatar", "phone", "job_title", "department", "role", "is_active", "last_seen_at")
 
 
 class TaskCreatorSerializer(serializers.ModelSerializer):

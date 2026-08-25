@@ -55,6 +55,22 @@ class ConversationWebSocketTests(TransactionTestCase):
             ],
         )
 
+    async def connect_pair(self):
+        sender_socket = self.socket(self.sender)
+        recipient_socket = self.socket(self.recipient)
+        self.assertTrue((await sender_socket.connect())[0])
+        sender_snapshot = await sender_socket.receive_json_from()
+        self.assertEqual(sender_snapshot["type"], "presence.snapshot")
+
+        self.assertTrue((await recipient_socket.connect())[0])
+        recipient_snapshot = await recipient_socket.receive_json_from()
+        self.assertEqual(recipient_snapshot["type"], "presence.snapshot")
+        recipient_online = await sender_socket.receive_json_from()
+        self.assertEqual(recipient_online["type"], "presence.changed")
+        self.assertEqual(recipient_online["user_id"], str(self.recipient.pk))
+        self.assertTrue(recipient_online["is_online"])
+        return sender_socket, recipient_socket
+
     async def test_rejects_anonymous_and_non_participant(self):
         anonymous = self.socket()
         connected, code = await anonymous.connect()
@@ -67,10 +83,7 @@ class ConversationWebSocketTests(TransactionTestCase):
         self.assertEqual(code, 4403)
 
     async def test_broadcasts_and_persists_message(self):
-        sender_socket = self.socket(self.sender)
-        recipient_socket = self.socket(self.recipient)
-        self.assertTrue((await sender_socket.connect())[0])
-        self.assertTrue((await recipient_socket.connect())[0])
+        sender_socket, recipient_socket = await self.connect_pair()
 
         await sender_socket.send_json_to(
             {
@@ -92,10 +105,7 @@ class ConversationWebSocketTests(TransactionTestCase):
         await recipient_socket.disconnect()
 
     async def test_validates_events_and_broadcasts_read_state(self):
-        sender_socket = self.socket(self.sender)
-        recipient_socket = self.socket(self.recipient)
-        self.assertTrue((await sender_socket.connect())[0])
-        self.assertTrue((await recipient_socket.connect())[0])
+        sender_socket, recipient_socket = await self.connect_pair()
 
         await sender_socket.send_json_to({"type": "message.send", "body": "   "})
         error = await sender_socket.receive_json_from()
@@ -110,3 +120,15 @@ class ConversationWebSocketTests(TransactionTestCase):
 
         await sender_socket.disconnect()
         await recipient_socket.disconnect()
+
+    async def test_broadcasts_offline_after_last_connection_closes(self):
+        sender_socket, recipient_socket = await self.connect_pair()
+
+        await recipient_socket.disconnect()
+        offline = await sender_socket.receive_json_from()
+        self.assertEqual(offline["type"], "presence.changed")
+        self.assertEqual(offline["user_id"], str(self.recipient.pk))
+        self.assertFalse(offline["is_online"])
+        self.assertIsNotNone(offline["last_seen"])
+
+        await sender_socket.disconnect()

@@ -41,6 +41,7 @@ class User(AbstractUser):
         help_text="Allow access to every department, including departments created later.",
     )
     role = models.CharField(max_length=16, choices=Role.choices, default=Role.MEMBER)
+    last_seen_at = models.DateTimeField(null=True, blank=True)
 
     USERNAME_FIELD = "email"
     REQUIRED_FIELDS = ["username"]
@@ -209,6 +210,12 @@ class ConversationParticipant(TimeStampedModel):
 
     class Meta:
         constraints = [models.UniqueConstraint(fields=["conversation", "user"], name="unique_conversation_participant")]
+
+
+class UserPresenceSession(TimeStampedModel):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="presence_sessions")
+    channel_name = models.CharField(max_length=255, unique=True)
+    last_heartbeat = models.DateTimeField(default=timezone.now, db_index=True)
 
 
 class Message(TimeStampedModel):
