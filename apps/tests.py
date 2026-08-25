@@ -1476,6 +1476,35 @@ class NotificationApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("department", response.data["errors"])
 
+    def test_direct_conversation_requires_recipient_and_reuses_existing_pair(self):
+        payload = {
+            "department": self.department.pk,
+            "title": "Direct chat",
+            "is_group": False,
+            "participants": [self.member.pk],
+        }
+
+        first = self.client.post("/api/v1/chat/conversations/", payload, format="json")
+        second = self.client.post("/api/v1/chat/conversations/", payload, format="json")
+
+        self.assertEqual(first.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(second.status_code, status.HTTP_200_OK)
+        self.assertEqual(first.data["id"], second.data["id"])
+        conversation = Conversation.objects.get(pk=first.data["id"])
+        self.assertSetEqual(
+            set(conversation.participants.values_list("pk", flat=True)),
+            {self.owner.pk, self.member.pk},
+        )
+        self.assertEqual(Conversation.objects.filter(is_group=False).count(), 1)
+
+        missing = self.client.post(
+            "/api/v1/chat/conversations/",
+            {"department": self.department.pk, "title": "Missing recipient", "is_group": False},
+            format="json",
+        )
+        self.assertEqual(missing.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("participants", missing.data["errors"])
+
     def test_notification_api_is_private_and_supports_read_actions(self):
         own = Notification.objects.create(
             recipient=self.owner, notification_type=Notification.Type.TASK_OVERDUE, title="Overdue"

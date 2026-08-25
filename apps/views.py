@@ -1303,6 +1303,40 @@ class ConversationViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
         return qs.filter(department_id=self.department_id()) if self.department_id() else qs
 
     @transaction.atomic
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        department = serializer.validated_data["department"]
+        self.ensure_member(department)
+
+        participants = set(serializer.validated_data.get("participants", [])) | {request.user}
+        if not serializer.validated_data.get("is_group", False):
+            # Lock both users so simultaneous requests cannot create two direct
+            # conversations for the same pair.
+            participant_ids = sorted((user.pk for user in participants), key=str)
+            list(User.objects.select_for_update().filter(pk__in=participant_ids).order_by("pk"))
+            existing = (
+                Conversation.objects.filter(department=department, is_group=False)
+                .annotate(
+                    participant_count=Count("participants", distinct=True),
+                    matched_participant_count=Count(
+                        "participants",
+                        filter=Q(participants__pk__in=participant_ids),
+                        distinct=True,
+                    ),
+                )
+                .filter(participant_count=2, matched_participant_count=2)
+                .first()
+            )
+            if existing:
+                existing = self.get_queryset().filter(pk=existing.pk).first() or existing
+                return Response(self.get_serializer(existing).data, status=status.HTTP_200_OK)
+
+        self.perform_create(serializer)
+        headers = self.get_success_headers(serializer.data)
+        return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
+    @transaction.atomic
     def perform_create(self, serializer):
         department = serializer.validated_data["department"]
         self.ensure_member(department)

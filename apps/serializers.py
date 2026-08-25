@@ -316,9 +316,20 @@ class ConversationSerializer(serializers.ModelSerializer):
         department = attrs.get("department") or getattr(self.instance, "department", None)
         if department is None:
             raise serializers.ValidationError({"department": "This field is required."})
-        for user in attrs.get("participants", []):
+        participants = attrs.get("participants")
+        if self.instance is None and not participants:
+            raise serializers.ValidationError({"participants": "At least one recipient is required."})
+        for user in participants or []:
             if user.department_id != department.id or not user.is_active:
                 raise serializers.ValidationError({"participants": "Every participant must belong to the department."})
+        if self.instance is None and not attrs.get("is_group", False):
+            request = self.context.get("request")
+            requester_id = request.user.pk if request and request.user.is_authenticated else None
+            recipient_ids = {user.pk for user in participants if user.pk != requester_id}
+            if len(recipient_ids) != 1:
+                raise serializers.ValidationError(
+                    {"participants": "A direct conversation requires exactly one recipient."}
+                )
         return attrs
 
 
