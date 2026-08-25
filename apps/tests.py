@@ -1548,6 +1548,49 @@ class NotificationApiTests(APITestCase):
         self.assertEqual(missing.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("participants", missing.data["errors"])
 
+    def test_direct_conversation_allows_cross_department_recipient(self):
+        other_department = Department.objects.create(name="Admissions", code="admissions-chat")
+        outsider = User.objects.create_user(
+            username="cross-department-chat",
+            email="cross-department-chat@example.com",
+            password="pass12345",
+            department=other_department,
+        )
+
+        first = self.client.post(
+            "/api/v1/chat/conversations/",
+            {
+                "department": self.department.pk,
+                "title": "Cross-department chat",
+                "is_group": False,
+                "participants": [outsider.pk],
+            },
+            format="json",
+        )
+        self.assertEqual(first.status_code, status.HTTP_201_CREATED)
+
+        self.client.force_authenticate(outsider)
+        reverse = self.client.post(
+            "/api/v1/chat/conversations/",
+            {
+                "department": other_department.pk,
+                "title": "Same direct chat",
+                "is_group": False,
+                "participants": [self.owner.pk],
+            },
+            format="json",
+        )
+
+        self.assertEqual(reverse.status_code, status.HTTP_200_OK)
+        self.assertEqual(reverse.data["id"], first.data["id"])
+        self.assertEqual(Conversation.objects.filter(is_group=False).count(), 1)
+        conversations = self.client.get(
+            "/api/v1/chat/conversations/",
+            {"department": other_department.pk},
+        )
+        self.assertEqual(conversations.status_code, status.HTTP_200_OK)
+        self.assertIn(first.data["id"], {item["id"] for item in conversations.data["results"]})
+
     def test_notification_api_is_private_and_supports_read_actions(self):
         own = Notification.objects.create(
             recipient=self.owner, notification_type=Notification.Type.TASK_OVERDUE, title="Overdue"

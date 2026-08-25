@@ -1353,7 +1353,11 @@ class ConversationViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
                 to_attr="current_user_links",
             ),
         ).distinct()
-        return qs.filter(department_id=self.department_id()) if self.department_id() else qs
+        if self.department_id():
+            # Direct conversations may connect users from different
+            # departments; only group conversations remain department-scoped.
+            qs = qs.filter(Q(is_group=False) | Q(department_id=self.department_id()))
+        return qs
 
     @transaction.atomic
     def create(self, request, *args, **kwargs):
@@ -1369,7 +1373,7 @@ class ConversationViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
             participant_ids = sorted((user.pk for user in participants), key=str)
             list(User.objects.select_for_update().filter(pk__in=participant_ids).order_by("pk"))
             existing = (
-                Conversation.objects.filter(department=department, is_group=False)
+                Conversation.objects.filter(is_group=False)
                 .annotate(
                     participant_count=Count("participants", distinct=True),
                     matched_participant_count=Count(
