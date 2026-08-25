@@ -50,6 +50,24 @@ Use `GET /api/v1/notifications/?unread=true` for unread items, `GET /api/v1/noti
 
 Run `python manage.py generate_notifications` daily (cron or Task Scheduler) to create deadline reminders and overdue notifications. The command is idempotent and respects each user's notification preferences.
 
+## Real-time chat
+
+Keep using the REST messages endpoint for history, pagination, and attachments. For
+live text messages, connect with an access token returned by the login endpoint:
+
+```text
+ws://127.0.0.1:8000/ws/chat/<conversation-uuid>/?token=<access-token>
+```
+
+Send `{"type":"message.send","body":"Hello","client_id":"local-123"}`. The
+server broadcasts a `message.created` event to every connected participant.
+`typing.set` (with an `is_typing` boolean) and `conversation.read` are also
+supported. Unauthorized users are closed with code `4401`; authenticated users
+outside the conversation are closed with `4403`.
+
+Local development falls back to an in-memory channel layer. Set `REDIS_URL` in
+production so WebSocket events work across multiple Daphne/ASGI workers.
+
 ## Telegram integration
 
 Create one bot with BotFather and configure these environment variables:

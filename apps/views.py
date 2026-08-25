@@ -29,7 +29,8 @@ from drf_spectacular.utils import OpenApiParameter, extend_schema, inline_serial
 
 from .filters import EventFilter, TaskFilter
 from .models import Conversation, ConversationParticipant, Department, Event, Message, Notification, Report, Task, TelegramIntegration, User, UserPreference
-from .notifications import notify_new_message, notify_task_assigned, notify_task_completed
+from .chat.services import create_message
+from .notifications import notify_task_assigned, notify_task_completed
 from .pagination import StandardPagination
 from .permissions import IsDepartmentMember
 from .serializers import AccountDeleteSerializer, ConversationSerializer, DepartmentSerializer, EventSerializer, MemberSerializer, MessageSerializer, NotificationSerializer, PasswordChangeSerializer, PasswordResetConfirmSerializer, PasswordResetRequestSerializer, ProfileSerializer, ReportSerializer, SupportBotMessageSerializer, TaskCreatorSerializer, TaskSerializer, TwoFactorSerializer, UserBriefSerializer, UserPreferenceSerializer
@@ -1336,9 +1337,13 @@ class MessageViewSet(viewsets.ModelViewSet):
         conversation = serializer.validated_data["conversation"]
         if not conversation.participants.filter(pk=self.request.user.pk).exists():
             raise serializers.ValidationError({"conversation": "You are not a participant."})
-        message = serializer.save(sender=self.request.user)
-        Conversation.objects.filter(pk=conversation.pk).update(updated_at=timezone.now())
-        notify_new_message(message)
+        message = create_message(
+            conversation=conversation,
+            sender=self.request.user,
+            body=serializer.validated_data.get("body", ""),
+            attachment=serializer.validated_data.get("attachment"),
+        )
+        serializer.instance = message
 
     def perform_destroy(self, instance):
         if instance.sender != self.request.user:

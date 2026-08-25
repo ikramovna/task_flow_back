@@ -43,6 +43,7 @@ TELEGRAM_WEBHOOK_SECRET = os.getenv('TELEGRAM_WEBHOOK_SECRET', '')
 # Application definition
 
 INSTALLED_APPS = [
+    'daphne',
     'jazzmin',
     'import_export',
     'django.contrib.admin',
@@ -94,6 +95,21 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'root.wsgi.application'
+ASGI_APPLICATION = 'root.asgi.application'
+
+# Local development works without extra infrastructure. Production should set
+# REDIS_URL so messages can be delivered across every ASGI worker.
+REDIS_URL = os.getenv('REDIS_URL', '')
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': (
+            'channels_redis.core.RedisChannelLayer'
+            if REDIS_URL
+            else 'channels.layers.InMemoryChannelLayer'
+        ),
+        **({'CONFIG': {'hosts': [REDIS_URL]}} if REDIS_URL else {}),
+    }
+}
 
 
 # Database
