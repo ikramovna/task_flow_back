@@ -647,6 +647,70 @@ class DepartmentScopedApiTests(APITestCase):
             str(other_department.pk),
         )
 
+    def test_member_can_create_task_in_own_department(self):
+        self.client.force_authenticate(self.member)
+
+        response = self.client.post(
+            "/api/v1/tasks/",
+            {
+                "department": self.department.pk,
+                "title": "Member-created task",
+                "assignees": [self.member.pk],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(str(response.data["created_by"]), str(self.member.pk))
+        self.assertEqual(str(response.data["department"]), str(self.department.pk))
+
+    def test_member_cannot_create_task_in_another_department(self):
+        other_department = Department.objects.create(
+            name="Legal", code="legal-member-task"
+        )
+        outsider = User.objects.create_user(
+            username="legal-assignee",
+            email="legal-assignee@example.com",
+            password="pass12345",
+            department=other_department,
+        )
+        self.client.force_authenticate(self.member)
+
+        response = self.client.post(
+            "/api/v1/tasks/",
+            {
+                "department": other_department.pk,
+                "title": "Out-of-scope task",
+                "assignees": [outsider.pk],
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_member_assignee_search_is_scoped_to_accessible_departments(self):
+        other_department = Department.objects.create(
+            name="Sales", code="sales-member-search"
+        )
+        User.objects.create_user(
+            username="sales-aziza",
+            email="sales-aziza@example.com",
+            password="pass12345",
+            first_name="Aziza",
+            department=other_department,
+        )
+        self.member.first_name = "Aziza"
+        self.member.save(update_fields=["first_name"])
+        self.client.force_authenticate(self.member)
+
+        response = self.client.get(
+            "/api/v1/tasks/assignees/", {"search": "Aziza"}
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(str(response.data["results"][0]["id"]), str(self.member.pk))
+
     def test_manager_can_create_task_in_any_department(self):
         other_department = Department.objects.create(name="Finance", code="finance")
         other_member = User.objects.create_user(
@@ -1590,6 +1654,66 @@ class NotificationApiTests(APITestCase):
         )
         self.assertEqual(conversations.status_code, status.HTTP_200_OK)
         self.assertIn(first.data["id"], {item["id"] for item in conversations.data["results"]})
+
+    def test_every_role_can_find_and_message_any_active_user(self):
+        other_department = Department.objects.create(
+            name="People", code="people-chat-recipient"
+        )
+        recipient = User.objects.create_user(
+            username="company-recipient",
+            email="company-recipient@example.com",
+            password="pass12345",
+            first_name="Dilnoza",
+            department=other_department,
+        )
+
+        users_by_role = {User.Role.OWNER: self.owner, User.Role.MEMBER: self.member}
+        for role in (User.Role.ADMIN, User.Role.MANAGER):
+            users_by_role[role] = User.objects.create_user(
+                username=f"chat-{role}",
+                email=f"chat-{role}@example.com",
+                password="pass12345",
+                department=self.department,
+                role=role,
+            )
+
+        for role, sender in users_by_role.items():
+            with self.subTest(role=role):
+                self.client.force_authenticate(sender)
+                recipients = self.client.get(
+                    "/api/v1/chat/conversations/recipients/",
+                    {"search": "Dilnoza"},
+                )
+                self.assertEqual(recipients.status_code, status.HTTP_200_OK)
+                self.assertEqual(recipients.data["count"], 1)
+                self.assertEqual(
+                    str(recipients.data["results"][0]["id"]), str(recipient.pk)
+                )
+
+                conversation = self.client.post(
+                    "/api/v1/chat/conversations/",
+                    {
+                        "department": self.department.pk,
+                        "title": f"{role} direct chat",
+                        "is_group": False,
+                        "participants": [recipient.pk],
+                    },
+                    format="json",
+                )
+                self.assertIn(
+                    conversation.status_code,
+                    (status.HTTP_200_OK, status.HTTP_201_CREATED),
+                )
+
+                message = self.client.post(
+                    "/api/v1/chat/messages/",
+                    {
+                        "conversation": conversation.data["id"],
+                        "body": f"Hello from {role}",
+                    },
+                    format="json",
+                )
+                self.assertEqual(message.status_code, status.HTTP_201_CREATED)
 
     def test_notification_api_is_private_and_supports_read_actions(self):
         own = Notification.objects.create(

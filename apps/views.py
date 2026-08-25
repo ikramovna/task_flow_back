@@ -352,7 +352,7 @@ class TaskViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
             raise serializers.ValidationError({
                 "assignees": "Select at least one assignee with a department."
             })
-        self.ensure_department_task_manager(department)
+        self.ensure_department_task_creator(department)
         task = serializer.save(created_by=self.request.user)
         notify_task_assigned(task, self.request.user, task.assignees.all())
 
@@ -360,16 +360,8 @@ class TaskViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
     def assignees(self, request):
         """Search company-wide assignees exclusively for task assignment."""
         user = request.user
-        if not (
-            user.is_active
-            and (
-                user.is_superuser
-                or user.role in (User.Role.OWNER, User.Role.ADMIN, User.Role.MANAGER)
-            )
-        ):
-            raise PermissionDenied(
-                "Only an Owner, Admin, or Manager can search task assignees."
-            )
+        if not user.is_active:
+            raise PermissionDenied("Only active members can search task assignees.")
 
         search = request.query_params.get("search", "").strip()
         queryset = User.objects.none()
@@ -387,6 +379,11 @@ class TaskViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
                 .order_by("first_name", "last_name", "email")
                 .distinct()
             )
+            if not (
+                user.is_superuser
+                or user.role in PRIVILEGED_TASK_ROLES
+            ):
+                queryset = self.scope_departments(queryset, field="department")
 
         page = self.paginate_queryset(queryset)
         serializer = UserBriefSerializer(
@@ -397,6 +394,16 @@ class TaskViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
         if page is not None:
             return self.get_paginated_response(serializer.data)
         return Response(serializer.data)
+
+    def ensure_department_task_creator(self, department):
+        user = self.request.user
+        is_privileged = user.is_superuser or user.role in PRIVILEGED_TASK_ROLES
+        if not user.is_active or (
+            not is_privileged and not user.can_access_department(department)
+        ):
+            raise PermissionDenied(
+                "You can create tasks only in a department you can access."
+            )
 
     def ensure_department_task_manager(self, department):
         user = self.request.user
@@ -1358,6 +1365,37 @@ class ConversationViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
             # departments; only group conversations remain department-scoped.
             qs = qs.filter(Q(is_group=False) | Q(department_id=self.department_id()))
         return qs
+
+    @action(detail=False, methods=["get"], url_path="recipients")
+    def recipients(self, request):
+        """Search active users company-wide when starting a direct chat."""
+        search = request.query_params.get("search", "").strip()
+        queryset = User.objects.none()
+        if search:
+            queryset = (
+                User.objects.filter(is_active=True)
+                .exclude(pk=request.user.pk)
+                .filter(
+                    Q(first_name__icontains=search)
+                    | Q(last_name__icontains=search)
+                    | Q(email__icontains=search)
+                    | Q(job_title__icontains=search)
+                    | Q(department__name__icontains=search)
+                )
+                .select_related("department")
+                .order_by("first_name", "last_name", "email")
+                .distinct()
+            )
+
+        page = self.paginate_queryset(queryset)
+        serializer = UserBriefSerializer(
+            page if page is not None else queryset,
+            many=True,
+            context=self.get_serializer_context(),
+        )
+        if page is not None:
+            return self.get_paginated_response(serializer.data)
+        return Response(serializer.data)
 
     @transaction.atomic
     def create(self, request, *args, **kwargs):
