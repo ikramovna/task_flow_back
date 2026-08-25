@@ -286,6 +286,14 @@ class NotificationSerializer(serializers.ModelSerializer):
 
 
 class ConversationSerializer(serializers.ModelSerializer):
+    # DRF treats many-to-many fields with an explicit through model as
+    # read-only unless the serializer field is declared explicitly. Without
+    # this declaration incoming recipient IDs are silently discarded.
+    participants = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.filter(is_active=True),
+        many=True,
+        required=False,
+    )
     participant_details = UserBriefSerializer(source="participants", many=True, read_only=True)
     last_message = serializers.SerializerMethodField()
     unread_count = serializers.SerializerMethodField()
@@ -331,6 +339,12 @@ class ConversationSerializer(serializers.ModelSerializer):
                     {"participants": "A direct conversation requires exactly one recipient."}
                 )
         return attrs
+
+    def create(self, validated_data):
+        # ConversationParticipant rows are created by the view after it has
+        # added the requesting user to the recipient set.
+        validated_data.pop("participants", None)
+        return Conversation.objects.create(**validated_data)
 
 
 class ReportSerializer(serializers.ModelSerializer):
