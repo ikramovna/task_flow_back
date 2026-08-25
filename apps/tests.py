@@ -1431,6 +1431,30 @@ class NotificationApiTests(APITestCase):
         self.assertTrue(Notification.objects.filter(recipient=self.member, message_id=response.data["id"]).exists())
         self.assertFalse(Notification.objects.filter(recipient=self.other).exists())
 
+    @patch("apps.chat.services.broadcast_message", side_effect=ConnectionError("Redis unavailable"))
+    def test_message_creation_succeeds_when_realtime_broadcast_is_unavailable(self, _broadcast):
+        conversation = Conversation.objects.create(department=self.department, title="Release")
+        ConversationParticipant.objects.create(conversation=conversation, user=self.owner)
+
+        response = self.client.post(
+            "/api/v1/chat/messages/",
+            {"conversation": conversation.pk, "body": "Saved without Redis"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(Message.objects.filter(pk=response.data["id"]).exists())
+
+    def test_conversation_requires_department_instead_of_returning_server_error(self):
+        response = self.client.post(
+            "/api/v1/chat/conversations/",
+            {"title": "No department", "participants": [self.member.pk]},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("department", response.data["errors"])
+
     def test_notification_api_is_private_and_supports_read_actions(self):
         own = Notification.objects.create(
             recipient=self.owner, notification_type=Notification.Type.TASK_OVERDUE, title="Overdue"

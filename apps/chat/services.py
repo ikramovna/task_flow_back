@@ -1,4 +1,5 @@
 import json
+import logging
 
 from asgiref.sync import async_to_sync
 from channels.layers import get_channel_layer
@@ -9,6 +10,8 @@ from rest_framework.renderers import JSONRenderer
 from apps.models import Conversation, Message
 from apps.notifications import notify_new_message
 from apps.serializers import MessageSerializer
+
+logger = logging.getLogger(__name__)
 
 
 def conversation_group(conversation_id):
@@ -33,6 +36,15 @@ def broadcast_message(message, *, client_id=None):
     )
 
 
+def broadcast_message_safely(message, *, client_id=None):
+    try:
+        broadcast_message(message, client_id=client_id)
+    except Exception:
+        # A temporary Redis/channel-layer outage must not turn a successfully
+        # persisted REST message into a 500 response.
+        logger.exception("Could not broadcast message %s", message.pk)
+
+
 @transaction.atomic
 def create_message(*, conversation, sender, body="", attachment=None, client_id=None):
     message = Message.objects.create(
@@ -43,5 +55,5 @@ def create_message(*, conversation, sender, body="", attachment=None, client_id=
     )
     Conversation.objects.filter(pk=conversation.pk).update(updated_at=timezone.now())
     notify_new_message(message)
-    transaction.on_commit(lambda: broadcast_message(message, client_id=client_id))
+    transaction.on_commit(lambda: broadcast_message_safely(message, client_id=client_id))
     return message

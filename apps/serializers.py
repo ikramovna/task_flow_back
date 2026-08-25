@@ -300,7 +300,9 @@ class ConversationSerializer(serializers.ModelSerializer):
         )
 
     def validate(self, attrs):
-        department = attrs.get("department") or self.instance.department
+        department = attrs.get("department") or getattr(self.instance, "department", None)
+        if department is None:
+            raise serializers.ValidationError({"department": "This field is required."})
         for user in attrs.get("participants", []):
             if user.department_id != department.id or not user.is_active:
                 raise serializers.ValidationError({"participants": "Every participant must belong to the department."})
