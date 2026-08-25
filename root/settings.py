@@ -126,6 +126,12 @@ DATABASES = {
     }
 }
 
+# Database backups. Run ``manage.py backup_database`` daily; the command only
+# creates a backup when this interval has elapsed since the latest one.
+BACKUP_INTERVAL_DAYS = int(os.getenv('BACKUP_INTERVAL_DAYS', '7'))
+_backup_dir = Path(os.getenv('BACKUP_DIR', 'backups'))
+BACKUP_DIR = _backup_dir if _backup_dir.is_absolute() else BASE_DIR / _backup_dir
+
 
 # Password validation
 # https://docs.djangoproject.com/en/6.0/ref/settings/#auth-password-validators

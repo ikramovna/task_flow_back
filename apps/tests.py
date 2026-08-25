@@ -9,9 +9,30 @@ from django.utils.encoding import force_bytes
 from django.utils.http import urlsafe_base64_encode
 from rest_framework import status
 from rest_framework.test import APITestCase
+from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import Conversation, ConversationParticipant, Department, Event, Message, Notification, Task, TelegramIntegration, User, UserPreference
 from .notifications import generate_deadline_notifications
+
+
+class AuthTokenApiTests(APITestCase):
+    def test_refresh_for_deleted_user_returns_401_instead_of_500(self):
+        user = User.objects.create_user(
+            username="deleted-token-user",
+            email="deleted-token@example.com",
+            password="pass12345",
+        )
+        refresh = str(RefreshToken.for_user(user))
+        user.delete()
+
+        response = self.client.post(
+            "/api/v1/auth/token/refresh/",
+            {"refresh": refresh},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertFalse(response.data["success"])
 
 
 @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")

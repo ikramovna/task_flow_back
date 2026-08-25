@@ -53,6 +53,20 @@ Use `GET /api/v1/notifications/?unread=true` for unread items, `GET /api/v1/noti
 
 Run `python manage.py generate_notifications` daily (cron or Task Scheduler) to create deadline reminders and overdue notifications. The command is idempotent and respects each user's notification preferences.
 
+## Database backups
+
+Set `BACKUP_INTERVAL_DAYS` in `.env` to the required number of days (the
+default is `7`) and optionally set `BACKUP_DIR` (the default is `backups`). Run
+the following command daily from cron or Windows Task Scheduler:
+
+```powershell
+.\.venv312\Scripts\python.exe manage.py backup_database
+```
+
+The command skips the backup until the configured interval has elapsed. Use
+`python manage.py backup_database --force` for an immediate backup. PostgreSQL's
+`pg_dump` command must be installed and available on `PATH`.
+
 ## Real-time chat
 
 Keep using the REST messages endpoint for history, pagination, and attachments. For

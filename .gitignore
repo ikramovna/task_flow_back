@@ -4,8 +4,8 @@ __pycache__/
 *.py[cod]
 db.sqlite3
 media/
+backups/
 .env
 .idea/
 .coverage
 htmlcov/
-
