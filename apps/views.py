@@ -1,5 +1,3 @@
-import csv
-import io
 import secrets
 from datetime import date, datetime, time, timedelta
 from email.mime.image import MIMEImage
@@ -37,6 +35,7 @@ from .serializers import AccountDeleteSerializer, ConversationSerializer, Depart
 from .telegram_support import TelegramSupportError, send_support_message
 from .telegram import TelegramError, bot_api, webhook_url
 from .task_visibility import PRIVILEGED_TASK_ROLES, visible_tasks_for
+from .reporting import REPORT_TEMPLATES, build_report_docx, build_report_result
 
 
 class PasswordResetRequestView(generics.GenericAPIView):
@@ -205,6 +204,16 @@ class MemberViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
             raise PermissionDenied("Only an Owner, Admin, or Manager of this department can remove members.")
         instance.delete()
 
+    @extend_schema(
+        responses=inline_serializer(
+            name="ReportDashboardSummary",
+            fields={
+                "reports_generated": serializers.IntegerField(),
+                "scheduled_reports": serializers.IntegerField(),
+                "last_generated_at": serializers.DateTimeField(allow_null=True),
+            },
+        )
+    )
     @action(detail=False, methods=["get"])
     def summary(self, request):
         qs = self.filter_queryset(self.get_queryset())
@@ -1642,33 +1651,94 @@ class ReportViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
     filter_backends = (DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter)
     filterset_fields = ("report_type", "status")
     search_fields = ("name",)
-    ordering_fields = ("created_at", "name", "status")
+    ordering_fields = ("created_at", "name", "status", "report_type")
+    ordering = ("-created_at",)
 
     def get_queryset(self):
         if getattr(self, "swagger_fake_view", False):
             return self.queryset
         qs = Report.objects.select_related("generated_by", "department").distinct()
         qs = self.scope_departments(qs)
-        return qs.filter(department_id=self.department_id()) if self.department_id() else qs
+        if self.department_id():
+            qs = qs.filter(department_id=self.department_id())
+        report_type = self.request.query_params.get("type")
+        if report_type:
+            qs = qs.filter(report_type=report_type)
+        generated_by = self.request.query_params.get("generated_by")
+        if generated_by:
+            qs = qs.filter(generated_by_id=generated_by)
+        days = self.request.query_params.get("days")
+        if days:
+            try:
+                days = int(days)
+                if days < 1 or days > 3650:
+                    raise ValueError
+            except ValueError as exc:
+                raise serializers.ValidationError({"days": "Use an integer between 1 and 3650."}) from exc
+            qs = qs.filter(created_at__gte=timezone.now() - timedelta(days=days))
+        return qs
 
     def perform_create(self, serializer):
         department = serializer.validated_data["department"]
         self.ensure_member(department)
         report = serializer.save(generated_by=self.request.user)
-        tasks = visible_tasks_for(Task.objects.filter(department=department), self.request.user)
-        result = {"tasks": tasks.count(), "completed": tasks.filter(status=Task.Status.COMPLETED).count(), "in_progress": tasks.filter(status=Task.Status.IN_PROGRESS).count(), "members": department.users.filter(is_active=True).count()}
-        buffer = io.StringIO()
-        writer = csv.writer(buffer)
-        writer.writerow(["metric", "value"])
-        writer.writerows(result.items())
-        report.result = result
-        report.status = Report.Status.READY
-        report.file.save(f"{report.id}.csv", ContentFile(buffer.getvalue().encode("utf-8")), save=False)
-        report.save(update_fields=["result", "status", "file", "updated_at"])
+        try:
+            result = build_report_result(report, self.request.user)
+            document = build_report_docx(report, result)
+            report.result = result
+            report.status = Report.Status.READY
+            report.file.save(f"{report.id}.docx", ContentFile(document), save=False)
+            report.save(update_fields=["result", "status", "file", "updated_at"])
+        except Exception:
+            report.status = Report.Status.FAILED
+            report.save(update_fields=["status", "updated_at"])
+            raise
 
+    @action(detail=False, methods=["get"])
+    def summary(self, request):
+        queryset = self.filter_queryset(self.get_queryset())
+        last = queryset.order_by("-created_at").first()
+        return Response({
+            "reports_generated": queryset.count(),
+            "scheduled_reports": queryset.exclude(parameters__schedule__isnull=True).count(),
+            "last_generated_at": last.created_at if last else None,
+        })
+
+    @extend_schema(
+        responses=inline_serializer(
+            name="ReportTemplateList",
+            fields={"results": serializers.ListField(child=serializers.DictField())},
+        )
+    )
+    @action(detail=False, methods=["get"])
+    def templates(self, request):
+        return Response({"results": REPORT_TEMPLATES})
+
+    @extend_schema(responses=ReportSerializer)
+    @action(detail=True, methods=["get"])
+    def preview(self, request, pk=None):
+        report = self.get_object()
+        return Response({
+            "id": report.id,
+            "name": report.name,
+            "report_type": report.report_type,
+            "status": report.status,
+            "parameters": report.parameters,
+            "result": report.result,
+            "generated_by": UserBriefSerializer(report.generated_by, context={"request": request}).data,
+            "generated_at": report.created_at,
+        })
+
+    @extend_schema(responses={(200, "application/vnd.openxmlformats-officedocument.wordprocessingml.document"): OpenApiTypes.BINARY})
     @action(detail=True, methods=["get"])
     def download(self, request, pk=None):
         report = self.get_object()
         if not report.file:
             return Response({"detail": "Report file is not ready."}, status=status.HTTP_409_CONFLICT)
-        return FileResponse(report.file.open("rb"), as_attachment=True, filename=f"{report.name}.csv")
+        filename = f"{report.name}.docx"
+        return FileResponse(
+            report.file.open("rb"),
+            as_attachment=True,
+            filename=filename,
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )

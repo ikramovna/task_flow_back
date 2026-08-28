@@ -1,4 +1,5 @@
 from datetime import timedelta
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from django.contrib.auth.tokens import default_token_generator
@@ -11,7 +12,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import Conversation, ConversationParticipant, Department, Event, Message, Notification, Project, Task, TelegramIntegration, User, UserPreference
+from .models import Conversation, ConversationParticipant, Department, Event, Message, Notification, Project, Report, Task, TelegramIntegration, User, UserPreference
 from .notifications import generate_deadline_notifications
 
 
@@ -1744,3 +1745,76 @@ class NotificationApiTests(APITestCase):
         self.assertEqual(Notification.objects.filter(
             recipient=self.member, notification_type=Notification.Type.DEADLINE_REMINDER
         ).count(), 1)
+
+
+class ReportsUiApiTests(APITestCase):
+    def setUp(self):
+        self.media = TemporaryDirectory()
+        self.addCleanup(self.media.cleanup)
+        self.media_override = override_settings(MEDIA_ROOT=self.media.name)
+        self.media_override.enable()
+        self.addCleanup(self.media_override.disable)
+        self.department = Department.objects.create(name="Engineering", code="engineering-reports")
+        self.owner = User.objects.create_user(
+            username="reports-owner", email="reports@example.com", password="pass12345",
+            department=self.department, role=User.Role.OWNER,
+        )
+        self.project = Project.objects.create(
+            department=self.department, name="CRM Platform", status=Project.Status.ACTIVE,
+            created_by=self.owner, manager=self.owner, end_date=timezone.localdate() + timedelta(days=10),
+        )
+        Task.objects.create(
+            department=self.department, project=self.project, title="Payment integration",
+            created_by=self.owner, main_assignee=self.owner, status=Task.Status.IN_PROGRESS,
+            due_date=timezone.localdate() - timedelta(days=1),
+        )
+        self.client.force_authenticate(self.owner)
+
+    def test_report_templates_match_ui_cards(self):
+        response = self.client.get("/api/v1/reports/templates/")
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            [item["type"] for item in response.data["results"]],
+            ["weekly_progress", "team_performance", "project_status", "time_tracking", "custom"],
+        )
+
+    def test_generate_preview_download_and_summary(self):
+        response = self.client.post("/api/v1/reports/", {
+            "department": str(self.department.id),
+            "name": "Weekly Team Summary",
+            "report_type": Report.Type.WEEKLY_PROGRESS,
+            "parameters": {"projects": [str(self.project.id)]},
+        }, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.data["status"], Report.Status.READY)
+        self.assertTrue(response.data["download_url"].endswith("/download/"))
+        report_id = response.data["id"]
+
+        preview = self.client.get(f"/api/v1/reports/{report_id}/preview/")
+        self.assertEqual(preview.status_code, status.HTTP_200_OK)
+        self.assertEqual(preview.data["result"]["summary"]["overdue"], 1)
+
+        download = self.client.get(f"/api/v1/reports/{report_id}/download/")
+        self.assertEqual(download.status_code, status.HTTP_200_OK)
+        self.assertIn(".docx", download["Content-Disposition"])
+        download.close()
+
+        summary = self.client.get("/api/v1/reports/summary/", {"department": self.department.id})
+        self.assertEqual(summary.status_code, status.HTTP_200_OK)
+        self.assertEqual(summary.data["reports_generated"], 1)
+        self.assertIsNotNone(summary.data["last_generated_at"])
+
+    def test_recent_report_filters_and_custom_validation(self):
+        Report.objects.create(
+            department=self.department, name="Project Health", report_type=Report.Type.PROJECT_STATUS,
+            status=Report.Status.READY, generated_by=self.owner,
+        )
+        response = self.client.get("/api/v1/reports/", {"type": "project_status", "days": 30})
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], 1)
+
+        invalid = self.client.post("/api/v1/reports/", {
+            "department": str(self.department.id), "name": "Custom",
+            "report_type": Report.Type.CUSTOM, "parameters": {},
+        }, format="json")
+        self.assertEqual(invalid.status_code, status.HTTP_400_BAD_REQUEST)

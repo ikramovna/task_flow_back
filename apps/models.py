@@ -333,7 +333,7 @@ class Report(TimeStampedModel):
     class Type(models.TextChoices):
         WEEKLY_PROGRESS = "weekly_progress", "Weekly Progress"
         TEAM_PERFORMANCE = "team_performance", "Team Performance"
-        DEPARTMENT_STATUS = "department_status", "Department Status"
+        PROJECT_STATUS = "project_status", "Project Status"
         TIME_TRACKING = "time_tracking", "Time Tracking"
         CUSTOM = "custom", "Custom"
 

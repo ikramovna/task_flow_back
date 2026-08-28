@@ -435,8 +435,60 @@ class ConversationSerializer(serializers.ModelSerializer):
 
 class ReportSerializer(serializers.ModelSerializer):
     generated_by_detail = UserBriefSerializer(source="generated_by", read_only=True)
+    download_url = serializers.SerializerMethodField()
+    preview_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Report
-        fields = ("id", "department", "name", "report_type", "status", "parameters", "result", "file", "generated_by", "generated_by_detail", "created_at", "updated_at")
-        read_only_fields = ("status", "result", "file", "generated_by")
+        fields = (
+            "id", "department", "name", "report_type", "status", "parameters", "result",
+            "file", "download_url", "preview_url", "generated_by", "generated_by_detail",
+            "created_at", "updated_at",
+        )
+        read_only_fields = ("status", "result", "file", "generated_by", "download_url", "preview_url")
+
+    def get_download_url(self, obj) -> str:
+        request = self.context.get("request")
+        path = f"/api/v1/reports/{obj.pk}/download/"
+        return request.build_absolute_uri(path) if request else path
+
+    def get_preview_url(self, obj) -> str:
+        request = self.context.get("request")
+        path = f"/api/v1/reports/{obj.pk}/preview/"
+        return request.build_absolute_uri(path) if request else path
+
+    def validate_parameters(self, value):
+        value = value or {}
+        allowed = {"start_date", "end_date", "projects", "fields", "schedule"}
+        unknown = sorted(set(value) - allowed)
+        if unknown:
+            raise serializers.ValidationError(f"Unsupported parameters: {', '.join(unknown)}")
+        parsed_dates = {}
+        for key in ("start_date", "end_date"):
+            if value.get(key):
+                parsed_dates[key] = serializers.DateField().to_internal_value(value[key])
+        if parsed_dates.get("start_date") and parsed_dates.get("end_date") and parsed_dates["start_date"] > parsed_dates["end_date"]:
+            raise serializers.ValidationError("start_date must be on or before end_date.")
+        if value.get("projects") is not None:
+            if not isinstance(value["projects"], list):
+                raise serializers.ValidationError("projects must be a list of project IDs.")
+            try:
+                project_ids = [str(serializers.UUIDField().to_internal_value(item)) for item in value["projects"]]
+            except serializers.ValidationError as exc:
+                raise serializers.ValidationError("Every project ID must be a valid UUID.") from exc
+            department = self.initial_data.get("department")
+            existing = Project.objects.filter(department_id=department, id__in=project_ids).count()
+            if existing != len(set(project_ids)):
+                raise serializers.ValidationError("Every project must belong to the selected department.")
+            value["projects"] = project_ids
+        if value.get("fields") is not None and not isinstance(value["fields"], list):
+            raise serializers.ValidationError("fields must be a list.")
+        if value.get("schedule") is not None and not isinstance(value["schedule"], dict):
+            raise serializers.ValidationError("schedule must be an object.")
+        return value
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        if attrs.get("report_type") == Report.Type.CUSTOM and not attrs.get("parameters", {}).get("fields"):
+            raise serializers.ValidationError({"parameters": "Custom reports require at least one field."})
+        return attrs

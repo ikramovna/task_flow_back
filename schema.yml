@@ -214,20 +214,20 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/TokenRefresh'
+              $ref: '#/components/schemas/SafeTokenRefresh'
           application/x-www-form-urlencoded:
             schema:
-              $ref: '#/components/schemas/TokenRefresh'
+              $ref: '#/components/schemas/SafeTokenRefresh'
           multipart/form-data:
             schema:
-              $ref: '#/components/schemas/TokenRefresh'
+              $ref: '#/components/schemas/SafeTokenRefresh'
         required: true
       responses:
         '200':
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TokenRefresh'
+                $ref: '#/components/schemas/SafeTokenRefresh'
           description: ''
   /api/v1/chat/conversations/:
     get:
@@ -419,6 +419,21 @@ paths:
           multipart/form-data:
             schema:
               $ref: '#/components/schemas/Conversation'
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Conversation'
+          description: ''
+  /api/v1/chat/conversations/recipients/:
+    get:
+      operationId: api_v1_chat_conversations_recipients_retrieve
+      description: Search active users company-wide when starting a direct chat.
+      tags:
+      - Chat
       security:
       - jwtAuth: []
       responses:
@@ -1408,7 +1423,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Member'
+                $ref: '#/components/schemas/ReportDashboardSummary'
           description: ''
   /api/v1/notifications/:
     get:
@@ -1553,6 +1568,223 @@ paths:
               schema:
                 $ref: '#/components/schemas/Notification'
           description: ''
+  /api/v1/projects/:
+    get:
+      operationId: api_v1_projects_list
+      parameters:
+      - in: query
+        name: category
+        schema:
+          type: string
+      - in: query
+        name: department
+        schema:
+          type: string
+          format: uuid
+      - in: query
+        name: manager
+        schema:
+          type: integer
+      - name: ordering
+        required: false
+        in: query
+        description: Which field to use when ordering the results.
+        schema:
+          type: string
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - name: page_size
+        required: false
+        in: query
+        description: Number of results to return per page.
+        schema:
+          type: integer
+      - in: query
+        name: priority
+        schema:
+          type: string
+          enum:
+          - high
+          - low
+          - medium
+        description: |-
+          * `low` - Low
+          * `medium` - Medium
+          * `high` - High
+      - name: search
+        required: false
+        in: query
+        description: A search term.
+        schema:
+          type: string
+      - in: query
+        name: status
+        schema:
+          type: string
+          enum:
+          - active
+          - archived
+          - completed
+          - on_hold
+          - planning
+        description: |-
+          * `planning` - Planning
+          * `active` - Active
+          * `on_hold` - On Hold
+          * `completed` - Completed
+          * `archived` - Archived
+      - in: query
+        name: team_members
+        schema:
+          type: array
+          items:
+            type: integer
+        explode: true
+        style: form
+      tags:
+      - Projects
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedProjectList'
+          description: ''
+    post:
+      operationId: api_v1_projects_create
+      tags:
+      - Projects
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Project'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Project'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Project'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+          description: ''
+  /api/v1/projects/{id}/:
+    get:
+      operationId: api_v1_projects_retrieve
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this project.
+        required: true
+      tags:
+      - Projects
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+          description: ''
+    put:
+      operationId: api_v1_projects_update
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this project.
+        required: true
+      tags:
+      - Projects
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Project'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/Project'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/Project'
+        required: true
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+          description: ''
+    patch:
+      operationId: api_v1_projects_partial_update
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this project.
+        required: true
+      tags:
+      - Projects
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedProject'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedProject'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedProject'
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+          description: ''
+    delete:
+      operationId: api_v1_projects_destroy
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this project.
+        required: true
+      tags:
+      - Projects
+      security:
+      - jwtAuth: []
+      responses:
+        '204':
+          description: No response body
   /api/v1/reports/:
     get:
       operationId: api_v1_reports_list
@@ -1581,14 +1813,14 @@ paths:
           type: string
           enum:
           - custom
-          - department_status
+          - project_status
           - team_performance
           - time_tracking
           - weekly_progress
         description: |-
           * `weekly_progress` - Weekly Progress
           * `team_performance` - Team Performance
-          * `department_status` - Department Status
+          * `project_status` - Project Status
           * `time_tracking` - Time Tracking
           * `custom` - Custom
       - name: search
@@ -1767,9 +1999,60 @@ paths:
       responses:
         '200':
           content:
+            application/vnd.openxmlformats-officedocument.wordprocessingml.document:
+              schema:
+                type: string
+                format: binary
+          description: ''
+  /api/v1/reports/{id}/preview/:
+    get:
+      operationId: api_v1_reports_preview_retrieve
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: string
+          format: uuid
+        description: A UUID string identifying this report.
+        required: true
+      tags:
+      - Reports
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Report'
+          description: ''
+  /api/v1/reports/summary/:
+    get:
+      operationId: api_v1_reports_summary_retrieve
+      tags:
+      - Reports
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Report'
+          description: ''
+  /api/v1/reports/templates/:
+    get:
+      operationId: api_v1_reports_templates_retrieve
+      tags:
+      - Reports
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportTemplateList'
           description: ''
   /api/v1/support/bot/:
     post:
@@ -1862,6 +2145,11 @@ paths:
           * `low` - Low
           * `medium` - Medium
           * `high` - High
+      - in: query
+        name: project
+        schema:
+          type: string
+          format: uuid
       - name: search
         required: false
         in: query
@@ -2189,7 +2477,6 @@ components:
           type: array
           items:
             type: integer
-          readOnly: true
         participant_details:
           type: array
           items:
@@ -2216,7 +2503,6 @@ components:
       - id
       - last_message
       - participant_details
-      - participants
       - unread_count
       - updated_at
     DashboardResponse:
@@ -2651,6 +2937,29 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/Notification'
+    PaginatedProjectList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Project'
     PaginatedReportList:
       type: object
       required:
@@ -2761,7 +3070,6 @@ components:
           type: array
           items:
             type: integer
-          readOnly: true
         participant_details:
           type: array
           items:
@@ -3015,6 +3323,76 @@ components:
           type: string
           format: date-time
           readOnly: true
+    PatchedProject:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        department:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 220
+        description:
+          type: string
+        status:
+          $ref: '#/components/schemas/StatusDe9Enum'
+        priority:
+          $ref: '#/components/schemas/PriorityEnum'
+        category:
+          type: string
+          maxLength: 80
+        start_date:
+          type: string
+          format: date
+          nullable: true
+        end_date:
+          type: string
+          format: date
+          nullable: true
+        manager:
+          type: integer
+          nullable: true
+        manager_detail:
+          allOf:
+          - $ref: '#/components/schemas/UserBrief'
+          readOnly: true
+        team_members:
+          type: array
+          items:
+            type: integer
+        team_member_details:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserBrief'
+          readOnly: true
+        progress:
+          type: integer
+          readOnly: true
+        total_tasks:
+          type: integer
+          readOnly: true
+        completed_tasks:
+          type: integer
+          readOnly: true
+        created_by:
+          type: integer
+          readOnly: true
+        created_by_detail:
+          allOf:
+          - $ref: '#/components/schemas/UserBrief'
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
     PatchedReport:
       type: object
       properties:
@@ -3042,6 +3420,12 @@ components:
           type: string
           format: uri
           readOnly: true
+        download_url:
+          type: string
+          readOnly: true
+        preview_url:
+          type: string
+          readOnly: true
         generated_by:
           type: integer
           readOnly: true
@@ -3067,6 +3451,14 @@ components:
         department:
           type: string
           format: uuid
+        project:
+          type: string
+          format: uuid
+          nullable: true
+        project_detail:
+          allOf:
+          - $ref: '#/components/schemas/ProjectBrief'
+          readOnly: true
         title:
           type: string
           maxLength: 220
@@ -3254,6 +3646,106 @@ components:
       - role
       - two_factor_enabled
       - username
+    Project:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        department:
+          type: string
+          format: uuid
+        name:
+          type: string
+          maxLength: 220
+        description:
+          type: string
+        status:
+          $ref: '#/components/schemas/StatusDe9Enum'
+        priority:
+          $ref: '#/components/schemas/PriorityEnum'
+        category:
+          type: string
+          maxLength: 80
+        start_date:
+          type: string
+          format: date
+          nullable: true
+        end_date:
+          type: string
+          format: date
+          nullable: true
+        manager:
+          type: integer
+          nullable: true
+        manager_detail:
+          allOf:
+          - $ref: '#/components/schemas/UserBrief'
+          readOnly: true
+        team_members:
+          type: array
+          items:
+            type: integer
+        team_member_details:
+          type: array
+          items:
+            $ref: '#/components/schemas/UserBrief'
+          readOnly: true
+        progress:
+          type: integer
+          readOnly: true
+        total_tasks:
+          type: integer
+          readOnly: true
+        completed_tasks:
+          type: integer
+          readOnly: true
+        created_by:
+          type: integer
+          readOnly: true
+        created_by_detail:
+          allOf:
+          - $ref: '#/components/schemas/UserBrief'
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - completed_tasks
+      - created_at
+      - created_by
+      - created_by_detail
+      - department
+      - id
+      - manager_detail
+      - name
+      - progress
+      - team_member_details
+      - total_tasks
+      - updated_at
+    ProjectBrief:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+          readOnly: true
+        name:
+          type: string
+          maxLength: 220
+        status:
+          $ref: '#/components/schemas/StatusDe9Enum'
+        priority:
+          $ref: '#/components/schemas/PriorityEnum'
+      required:
+      - id
+      - name
     Report:
       type: object
       properties:
@@ -3281,6 +3773,12 @@ components:
           type: string
           format: uri
           readOnly: true
+        download_url:
+          type: string
+          readOnly: true
+        preview_url:
+          type: string
+          readOnly: true
         generated_by:
           type: integer
           readOnly: true
@@ -3298,15 +3796,32 @@ components:
           readOnly: true
       required:
       - created_at
+      - download_url
       - file
       - generated_by
       - generated_by_detail
       - id
       - name
+      - preview_url
       - report_type
       - result
       - status
       - updated_at
+    ReportDashboardSummary:
+      type: object
+      properties:
+        reports_generated:
+          type: integer
+        scheduled_reports:
+          type: integer
+        last_generated_at:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+      - last_generated_at
+      - reports_generated
+      - scheduled_reports
     ReportStatusEnum:
       enum:
       - processing
@@ -3317,18 +3832,28 @@ components:
         * `processing` - Processing
         * `ready` - Ready
         * `failed` - Failed
+    ReportTemplateList:
+      type: object
+      properties:
+        results:
+          type: array
+          items:
+            type: object
+            additionalProperties: {}
+      required:
+      - results
     ReportTypeEnum:
       enum:
       - weekly_progress
       - team_performance
-      - department_status
+      - project_status
       - time_tracking
       - custom
       type: string
       description: |-
         * `weekly_progress` - Weekly Progress
         * `team_performance` - Team Performance
-        * `department_status` - Department Status
+        * `project_status` - Project Status
         * `time_tracking` - Time Tracking
         * `custom` - Custom
     RoleEnum:
@@ -3343,6 +3868,31 @@ components:
         * `admin` - Admin
         * `manager` - Manager
         * `member` - Member
+    SafeTokenRefresh:
+      type: object
+      properties:
+        refresh:
+          type: string
+        access:
+          type: string
+          readOnly: true
+      required:
+      - access
+      - refresh
+    StatusDe9Enum:
+      enum:
+      - planning
+      - active
+      - on_hold
+      - completed
+      - archived
+      type: string
+      description: |-
+        * `planning` - Planning
+        * `active` - Active
+        * `on_hold` - On Hold
+        * `completed` - Completed
+        * `archived` - Archived
     SupportBotMessage:
       type: object
       properties:
@@ -3372,6 +3922,14 @@ components:
         department:
           type: string
           format: uuid
+        project:
+          type: string
+          format: uuid
+          nullable: true
+        project_detail:
+          allOf:
+          - $ref: '#/components/schemas/ProjectBrief'
+          readOnly: true
         title:
           type: string
           maxLength: 220
@@ -3460,6 +4018,7 @@ components:
       - is_archived
       - main_assignee
       - main_assignee_detail
+      - project_detail
       - title
       - updated_at
     TaskCreator:
@@ -3521,17 +4080,6 @@ components:
       - email
       - password
       - refresh
-    TokenRefresh:
-      type: object
-      properties:
-        access:
-          type: string
-          readOnly: true
-        refresh:
-          type: string
-      required:
-      - access
-      - refresh
     TwoFactor:
       type: object
       properties:
@@ -3572,6 +4120,10 @@ components:
           title: Active
           description: Designates whether this user should be treated as active. Unselect
             this instead of deleting accounts.
+        last_seen_at:
+          type: string
+          format: date-time
+          nullable: true
       required:
       - email
       - full_name

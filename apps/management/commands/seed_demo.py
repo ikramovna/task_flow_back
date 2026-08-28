@@ -59,7 +59,7 @@ class Command(BaseCommand):
             Message.objects.create(conversation=conversation, sender=members[0], body="Hi! I wanted to update you on the database schema changes.")
             Message.objects.create(conversation=conversation, sender=owner, body="Great! What are the main changes?")
 
-        for name, report_type in [("Weekly Productivity Summary", Report.Type.WEEKLY_PROGRESS), ("Department Status", Report.Type.DEPARTMENT_STATUS), ("Team Utilization Report", Report.Type.TEAM_PERFORMANCE)]:
+        for name, report_type in [("Weekly Productivity Summary", Report.Type.WEEKLY_PROGRESS), ("Project Status", Report.Type.PROJECT_STATUS), ("Team Utilization Report", Report.Type.TEAM_PERFORMANCE)]:
             Report.objects.get_or_create(department=department, name=name, defaults={"report_type": report_type, "status": Report.Status.READY, "generated_by": owner})
 
         self.stdout.write(self.style.SUCCESS("Demo ready: admin@taskflow.local / TaskFlow123!"))
