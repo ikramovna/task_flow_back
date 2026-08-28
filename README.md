@@ -60,12 +60,13 @@ Run `python manage.py generate_notifications` daily (cron or Task Scheduler) to 
 
 ## Database backups
 
-Set `BACKUP_INTERVAL_DAYS` in `.env` to the required number of days (the
-default is `7`) and optionally set `BACKUP_DIR` (the default is `backups`). Run
-the following command daily from cron or Windows Task Scheduler:
+By default, the backup command creates one backup per day and keeps the latest
+five successful backups. You can override this with `BACKUP_INTERVAL_DAYS` and
+`BACKUP_RETENTION_COUNT` in `.env`; `BACKUP_DIR` defaults to `backups`. Run the
+following command daily from cron or Windows Task Scheduler:
 
 ```powershell
-.\.venv312\Scripts\python.exe manage.py backup_database
+.\.venv\Scripts\python.exe manage.py backup_database
 ```
 
 The command skips the backup until the configured interval has elapsed. Use

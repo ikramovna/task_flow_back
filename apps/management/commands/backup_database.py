@@ -9,7 +9,7 @@ from django.utils import timezone
 
 
 class Command(BaseCommand):
-    help = "Create a PostgreSQL backup when the configured interval has elapsed."
+    help = "Create a PostgreSQL backup and remove backups beyond the retention limit."
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -22,6 +22,11 @@ class Command(BaseCommand):
             action="store_true",
             help="Create a backup even if the interval has not elapsed.",
         )
+        parser.add_argument(
+            "--retain",
+            type=int,
+            help="Override BACKUP_RETENTION_COUNT for this run.",
+        )
 
     def handle(self, *args, **options):
         interval_days = options["interval_days"]
@@ -29,6 +34,11 @@ class Command(BaseCommand):
             interval_days = settings.BACKUP_INTERVAL_DAYS
         if interval_days < 1:
             raise CommandError("Backup interval must be at least 1 day.")
+        retention_count = options["retain"]
+        if retention_count is None:
+            retention_count = settings.BACKUP_RETENTION_COUNT
+        if retention_count < 1:
+            raise CommandError("Backup retention count must be at least 1.")
 
         backup_dir = Path(settings.BACKUP_DIR)
         backup_dir.mkdir(parents=True, exist_ok=True)
@@ -84,9 +94,28 @@ class Command(BaseCommand):
             temporary.unlink(missing_ok=True)
             raise CommandError(f"pg_dump failed with exit code {exc.returncode}.") from exc
 
+        removed_count = self._prune_backups(backup_dir, retention_count)
         self.stdout.write(self.style.SUCCESS(f"Backup created: {destination}"))
+        if removed_count:
+            self.stdout.write(
+                self.style.SUCCESS(
+                    f"Removed {removed_count} old backup(s); retained the latest {retention_count}."
+                )
+            )
 
     @staticmethod
     def _latest_backup(backup_dir):
         backups = backup_dir.glob("task_flow_*.dump")
         return max(backups, key=lambda path: path.stat().st_mtime, default=None)
+
+    @staticmethod
+    def _prune_backups(backup_dir, retention_count):
+        backups = sorted(
+            backup_dir.glob("task_flow_*.dump"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+        expired = backups[retention_count:]
+        for backup in expired:
+            backup.unlink()
+        return len(expired)
