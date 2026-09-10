@@ -273,6 +273,40 @@ class DepartmentScopedApiTests(APITestCase):
         self.assertEqual(str(response.data["department"]), str(self.department.pk))
         self.assertEqual(response.data["project_detail"]["name"], project.name)
 
+    def test_project_task_main_assignee_can_update_status_and_progress(self):
+        project = Project.objects.create(
+            department=self.department, name="Task updates", created_by=self.owner,
+        )
+        task = Task.objects.create(
+            department=self.department, project=project, title="Project task",
+            created_by=self.owner, main_assignee=self.member,
+        )
+        task.assignees.set([self.member])
+        self.client.force_authenticate(self.member)
+
+        for payload in (
+            {"status": Task.Status.IN_PROGRESS},
+            {"progress": 25},
+            {"status": Task.Status.ON_HOLD, "progress": 50},
+        ):
+            with self.subTest(payload=payload):
+                response = self.client.patch(
+                    f"/api/v1/tasks/{task.pk}/", payload, format="json",
+                )
+                self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+                task.refresh_from_db()
+                for field, value in payload.items():
+                    self.assertEqual(getattr(task, field), value)
+                self.assertEqual(task.department_id, self.department.pk)
+                self.assertEqual(task.project_id, project.pk)
+
+        response = self.client.patch(
+            f"/api/v1/tasks/{task.pk}/", {"title": "Not allowed"}, format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        task.refresh_from_db()
+        self.assertEqual(task.title, "Project task")
+
     def test_first_assignee_is_main_and_only_main_can_change_status(self):
         second = User.objects.create_user(
             username="second-assignee",
@@ -1803,6 +1837,26 @@ class ReportsUiApiTests(APITestCase):
         self.assertEqual(summary.status_code, status.HTTP_200_OK)
         self.assertEqual(summary.data["reports_generated"], 1)
         self.assertIsNotNone(summary.data["last_generated_at"])
+
+    def test_generate_report_accepts_all_and_specific_task_filters(self):
+        all_tasks = self.client.post("/api/v1/reports/", {
+            "department": str(self.department.id),
+            "name": "All priorities and statuses",
+            "report_type": Report.Type.WEEKLY_PROGRESS,
+            "parameters": {"priority": "All Priorities", "status": "All Statuses"},
+        }, format="json")
+        self.assertEqual(all_tasks.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(all_tasks.data["parameters"], {})
+        self.assertEqual(all_tasks.data["result"]["summary"]["total_tasks"], 1)
+
+        filtered = self.client.post("/api/v1/reports/", {
+            "department": str(self.department.id),
+            "name": "High priority work",
+            "report_type": Report.Type.WEEKLY_PROGRESS,
+            "parameters": {"priority": Task.Priority.HIGH, "status": Task.Status.IN_PROGRESS},
+        }, format="json")
+        self.assertEqual(filtered.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(filtered.data["result"]["summary"]["total_tasks"], 0)
 
     def test_recent_report_filters_and_custom_validation(self):
         Report.objects.create(

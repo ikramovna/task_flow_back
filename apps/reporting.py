@@ -75,6 +75,10 @@ def _tasks_for(report, user):
     project_ids = parameters.get("projects") or []
     if project_ids:
         tasks = tasks.filter(project_id__in=project_ids)
+    if parameters.get("priority"):
+        tasks = tasks.filter(priority=parameters["priority"])
+    if parameters.get("status"):
+        tasks = tasks.filter(status=parameters["status"])
     return tasks
 
 

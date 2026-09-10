@@ -207,7 +207,9 @@ class TaskSerializer(serializers.ModelSerializer):
         project = attrs.get("project", getattr(self.instance, "project", None))
         if department is None and project is not None:
             department = project.department
-            attrs["department"] = department
+            # An existing project must not add fields to status/progress updates.
+            if self.instance is None or "project" in attrs:
+                attrs["department"] = department
         if department is None and "assignees" in attrs:
             main_assignee = assignees[0] if assignees else None
             department = main_assignee.department if main_assignee else None
@@ -458,11 +460,26 @@ class ReportSerializer(serializers.ModelSerializer):
         return request.build_absolute_uri(path) if request else path
 
     def validate_parameters(self, value):
-        value = value or {}
-        allowed = {"start_date", "end_date", "projects", "fields", "schedule"}
+        value = dict(value or {})
+        allowed = {"start_date", "end_date", "projects", "fields", "schedule", "priority", "status"}
         unknown = sorted(set(value) - allowed)
         if unknown:
             raise serializers.ValidationError(f"Unsupported parameters: {', '.join(unknown)}")
+        filter_choices = {
+            "priority": set(Task.Priority.values),
+            "status": set(Task.Status.values),
+        }
+        all_values = {None, "", "all", "all_priorities", "all_statuses"}
+        for key, choices in filter_choices.items():
+            selected = value.get(key)
+            if isinstance(selected, str):
+                selected = selected.strip().lower().replace(" ", "_")
+            if selected in all_values:
+                value.pop(key, None)
+            elif selected not in choices:
+                raise serializers.ValidationError({key: f"Invalid task {key}."})
+            else:
+                value[key] = selected
         parsed_dates = {}
         for key in ("start_date", "end_date"):
             if value.get(key):
