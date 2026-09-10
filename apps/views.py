@@ -433,19 +433,28 @@ class TaskViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
         target_department = serializer.validated_data.get("department", task.department)
         user = self.request.user
         is_manager = user.role in PRIVILEGED_TASK_ROLES
+        changed_fields = set(serializer.validated_data)
+        member_fields = {"status", "progress"}
+        is_assigned = task.assignees.filter(pk=user.pk).exists()
+        can_update_assigned_progress = (
+            task.main_assignee_id == user.pk
+            and is_assigned
+            and bool(changed_fields)
+            and changed_fields.issubset(member_fields)
+        )
         if not user.is_active or (
-            not is_manager and not user.can_access_department(target_department)
+            not is_manager
+            and not user.can_access_department(target_department)
+            and not can_update_assigned_progress
         ):
             raise PermissionDenied("You are not a member of this department.")
 
-        changed_fields = set(serializer.validated_data)
-        member_fields = {"status", "progress"}
         if changed_fields & member_fields and task.main_assignee_id != user.pk:
             raise PermissionDenied(
                 "Only the main assignee can update task status and progress."
             )
         if not is_manager:
-            if not task.assignees.filter(pk=self.request.user.pk).exists():
+            if not is_assigned:
                 raise PermissionDenied("You can update only tasks assigned to you.")
             if not changed_fields.issubset(member_fields):
                 raise PermissionDenied(
