@@ -207,7 +207,9 @@ class TaskSerializer(serializers.ModelSerializer):
         project = attrs.get("project", getattr(self.instance, "project", None))
         if department is None and project is not None:
             department = project.department
-            attrs["department"] = department
+            # An existing project must not add fields to status/progress updates.
+            if self.instance is None or "project" in attrs:
+                attrs["department"] = department
         if department is None and "assignees" in attrs:
             main_assignee = assignees[0] if assignees else None
             department = main_assignee.department if main_assignee else None
