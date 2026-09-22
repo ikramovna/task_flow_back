@@ -273,6 +273,65 @@ class DepartmentScopedApiTests(APITestCase):
         self.assertEqual(str(response.data["department"]), str(self.department.pk))
         self.assertEqual(response.data["project_detail"]["name"], project.name)
 
+    def test_main_assignee_can_update_task_in_another_department(self):
+        other_department = Department.objects.create(name="Other team", code="other-team")
+        project = Project.objects.create(
+            department=other_department, name="Shared project", created_by=self.owner,
+        )
+        task = Task.objects.create(
+            department=other_department, project=project, title="Shared task",
+            created_by=self.owner, main_assignee=self.member,
+        )
+        task.assignees.set([self.member])
+        self.assertFalse(self.member.can_access_department(other_department))
+        self.client.force_authenticate(self.member)
+        for payload in (
+            {"status": Task.Status.IN_PROGRESS},
+            {"progress": 25},
+            {"status": Task.Status.ON_HOLD, "progress": 50},
+        ):
+            with self.subTest(payload=payload):
+                response = self.client.patch(
+                    f"/api/v1/tasks/{task.pk}/", payload, format="json",
+                )
+                self.assertEqual(response.status_code, status.HTTP_200_OK, response.data)
+                task.refresh_from_db()
+                for field, value in payload.items():
+                    self.assertEqual(getattr(task, field), value)
+                self.assertEqual(task.department_id, other_department.pk)
+
+        for payload in (
+            {"title": "Forbidden"},
+            {"status": Task.Status.IN_PROGRESS, "department": str(other_department.pk)},
+        ):
+            with self.subTest(forbidden_payload=payload):
+                response = self.client.patch(
+                    f"/api/v1/tasks/{task.pk}/", payload, format="json",
+                )
+                self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        task.refresh_from_db()
+        self.assertEqual(task.title, "Shared task")
+        self.assertEqual(task.department_id, other_department.pk)
+        self.assertEqual(task.status, Task.Status.ON_HOLD)
+
+        task.main_assignee = self.owner
+        task.save(update_fields=["main_assignee"])
+        response = self.client.patch(
+            f"/api/v1/tasks/{task.pk}/", {"status": Task.Status.IN_PROGRESS}, format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+        task.main_assignee = self.member
+        task.save(update_fields=["main_assignee"])
+        self.member.is_active = False
+        self.member.save(update_fields=["is_active"])
+        response = self.client.patch(
+            f"/api/v1/tasks/{task.pk}/", {"status": Task.Status.IN_PROGRESS}, format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        task.refresh_from_db()
+        self.assertEqual(task.status, Task.Status.ON_HOLD)
+
     def test_project_task_main_assignee_can_update_status_and_progress(self):
         project = Project.objects.create(
             department=self.department, name="Task updates", created_by=self.owner,

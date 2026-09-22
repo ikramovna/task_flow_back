@@ -223,6 +223,52 @@ class MemberViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
         efficiency = round(completed * 100 / tasks.count()) if tasks.exists() else 0
         return Response({"total_members": total, "average_efficiency": efficiency, "active_tasks": tasks.exclude(status=Task.Status.COMPLETED).count()})
 
+    @action(detail=False, methods=["get"], url_path="workload")
+    def workload(self, request):
+        members = list(self.filter_queryset(self.get_queryset()).filter(is_active=True, department__isnull=False).distinct())
+        member_ids = [member.pk for member in members]
+        department_ids = {member.department_id for member in members}
+        statuses = (Task.Status.NOT_STARTED, Task.Status.IN_PROGRESS, Task.Status.ON_HOLD)
+        tasks = visible_tasks_for(
+            Task.objects.filter(
+                assignees__in=member_ids,
+                department_id__in=department_ids,
+                status__in=statuses,
+                is_archived=False,
+            ).select_related("created_by").prefetch_related("assignees").distinct(),
+            request.user,
+        )
+        by_member = {member_id: [] for member_id in member_ids}
+        member_departments = {member.pk: member.department_id for member in members}
+        for task in tasks:
+            item = {
+                "id": str(task.pk),
+                "title": task.title,
+                "status": task.status,
+                "priority": task.priority,
+                "due_date": task.due_date,
+                "created_by": {"id": str(task.created_by_id), "full_name": task.created_by.get_full_name()},
+            }
+            for assignee in task.assignees.all():
+                if assignee.pk in by_member and member_departments[assignee.pk] == task.department_id:
+                    by_member[assignee.pk].append(item)
+
+        results = []
+        for member in members:
+            member_tasks = by_member[member.pk]
+            counts = {key: sum(task["status"] == key for task in member_tasks) for key in statuses}
+            results.append({
+                "id": str(member.pk),
+                "full_name": member.get_full_name(),
+                "job_title": member.job_title,
+                "avatar": request.build_absolute_uri(member.avatar.url) if member.avatar else None,
+                "department": {"id": str(member.department_id), "name": member.department.name},
+                "task_count": len(member_tasks),
+                "status_counts": counts,
+                "tasks": member_tasks,
+            })
+        return Response({"total_members": len(results), "results": results})
+
 
 class DepartmentViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
     queryset = Department.objects.none()
@@ -433,19 +479,28 @@ class TaskViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
         target_department = serializer.validated_data.get("department", task.department)
         user = self.request.user
         is_manager = user.role in PRIVILEGED_TASK_ROLES
+        changed_fields = set(serializer.validated_data)
+        member_fields = {"status", "progress"}
+        is_assigned = task.assignees.filter(pk=user.pk).exists()
+        can_update_assigned_progress = (
+            task.main_assignee_id == user.pk
+            and is_assigned
+            and bool(changed_fields)
+            and changed_fields.issubset(member_fields)
+        )
         if not user.is_active or (
-            not is_manager and not user.can_access_department(target_department)
+            not is_manager
+            and not user.can_access_department(target_department)
+            and not can_update_assigned_progress
         ):
             raise PermissionDenied("You are not a member of this department.")
 
-        changed_fields = set(serializer.validated_data)
-        member_fields = {"status", "progress"}
         if changed_fields & member_fields and task.main_assignee_id != user.pk:
             raise PermissionDenied(
                 "Only the main assignee can update task status and progress."
             )
         if not is_manager:
-            if not task.assignees.filter(pk=self.request.user.pk).exists():
+            if not is_assigned:
                 raise PermissionDenied("You can update only tasks assigned to you.")
             if not changed_fields.issubset(member_fields):
                 raise PermissionDenied(
