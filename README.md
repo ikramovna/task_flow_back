@@ -161,6 +161,11 @@ Register the webhook again after deploying this menu update: setup also runs
 next to the message composer. This is a native bot menu, not a Mini App, and
 requires no frontend deployment or extra website.
 
+`/menu` sends one Telegram request; inline callbacks acknowledge the press and
+edit the menu concurrently. Telegram API calls taking at least two seconds are
+logged as `Telegram <method> took <seconds>s` without message text or tokens, so
+production logs can distinguish Telegram network delay from AI processing time.
+
 ### Tiko frontend integration
 
 This repository contains the backend only. Add a **Task yaratish** mode and a

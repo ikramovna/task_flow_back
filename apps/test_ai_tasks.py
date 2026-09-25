@@ -2,6 +2,7 @@ import json
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
+from threading import Barrier
 from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -149,17 +150,38 @@ class TelegramAITaskTests(AITaskFixture, APITestCase):
         self.assertTrue(json.loads(self.bot.call_args_list[0].kwargs["reply_markup"])["remove_keyboard"])
         self.extractor.assert_not_called()
 
+    def test_menu_command_uses_one_telegram_request(self):
+        self.message["text"] = "/menu"
+        self.webhook()
+        self.bot.assert_called_once()
+        self.assertEqual(self.bot.call_args.args[0], "sendMessage")
+        self.assertIn("TASKFLOW", self.bot.call_args.kwargs["text"])
+
     def test_inline_callback_shows_create_screen_without_creating_task(self):
         callback = {"id": "cb1", "from": {"id": 101}, "message": self.message, "data": "task:create"}
         response = self.client.post("/api/v1/telegram/webhook/", {"callback_query": callback},
                                     format="json", HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="secret")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(self.bot.call_args_list[0].args[0], "answerCallbackQuery")
-        self.assertEqual(self.bot.call_args.args[0], "editMessageText")
-        self.assertEqual(self.bot.call_args.kwargs["parse_mode"], "HTML")
-        self.assertIn("CREATE A TASK", self.bot.call_args.kwargs["text"])
+        calls = {call.args[0]: call.kwargs for call in self.bot.call_args_list}
+        self.assertEqual(set(calls), {"answerCallbackQuery", "editMessageText"})
+        self.assertEqual(calls["editMessageText"]["parse_mode"], "HTML")
+        self.assertIn("CREATE A TASK", calls["editMessageText"]["text"])
         self.extractor.assert_not_called()
         self.assertFalse(Task.objects.exists())
+
+    def test_callback_telegram_requests_start_together(self):
+        rendezvous = Barrier(2, timeout=2)
+
+        def telegram_call(method, **kwargs):
+            if method in {"answerCallbackQuery", "editMessageText"}:
+                rendezvous.wait()
+
+        self.bot.side_effect = telegram_call
+        callback = {"id": "cb-parallel", "from": {"id": 101}, "message": self.message,
+                    "data": "task:create"}
+        response = self.client.post("/api/v1/telegram/webhook/", {"callback_query": callback},
+                                    format="json", HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="secret")
+        self.assertEqual(response.status_code, 200)
 
     def test_inline_callback_rejects_unlinked_sender(self):
         callback = {"id": "cb2", "from": {"id": 999}, "message": self.message, "data": "task:create"}
@@ -190,7 +212,8 @@ class TelegramAITaskTests(AITaskFixture, APITestCase):
                 response = self.client.post("/api/v1/telegram/webhook/", {"callback_query": callback},
                                             format="json", HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="secret")
                 self.assertEqual(response.status_code, 200)
-                self.assertIn(heading, self.bot.call_args.kwargs["text"])
+                edits = [call for call in self.bot.call_args_list if call.args[0] == "editMessageText"]
+                self.assertIn(heading, edits[-1].kwargs["text"])
         self.extractor.assert_not_called()
         self.assertFalse(Task.objects.exists())
 
@@ -199,7 +222,10 @@ class TelegramAITaskTests(AITaskFixture, APITestCase):
         self.webhook()
         self.assertIn("<pre>Create a task:", self.bot.call_args.kwargs["text"])
         self.assertIn("[Full name or email]", self.bot.call_args.kwargs["text"])
-        self.bot.side_effect = [None, TelegramError("Bad Request: message is not modified")]
+        def already_shown(method, **kwargs):
+            if method == "editMessageText":
+                raise TelegramError("Bad Request: message is not modified")
+        self.bot.side_effect = already_shown
         callback = {"id": "cb", "from": {"id": 101}, "message": self.message, "data": "task:template"}
         response = self.client.post("/api/v1/telegram/webhook/", {"callback_query": callback},
                                     format="json", HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="secret")

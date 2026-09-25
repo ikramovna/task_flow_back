@@ -1,5 +1,6 @@
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 from html import escape
 
 from django.utils import timezone
@@ -138,10 +139,17 @@ def handle_task_callback(callback):
         bot_api("answerCallbackQuery", callback_query_id=callback["id"],
                 text="Connect Telegram from your TaskFlow profile first.", show_alert=True)
         return
-    bot_api("answerCallbackQuery", callback_query_id=callback["id"])
     screen = str(callback.get("data", "")).removeprefix("task:")
     if screen in {"menu", "create", "voice", "template", "example", "help"}:
-        send_screen(chat["id"], screen, message.get("message_id"))
+        # Telegram's spinner and the edited menu can be updated independently.
+        # Start both network calls together instead of waiting for two round trips.
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            acknowledged = pool.submit(bot_api, "answerCallbackQuery", callback_query_id=callback["id"])
+            updated = pool.submit(send_screen, chat["id"], screen, message.get("message_id"))
+            acknowledged.result()
+            updated.result()
+    else:
+        bot_api("answerCallbackQuery", callback_query_id=callback["id"])
 
 
 def download_voice(voice):
@@ -186,6 +194,9 @@ def handle_task_message(message):
     screens = {"/menu": "menu", "/create": "create", "Create task": "create",
                "/voice": "voice", "/template": "template", "/example": "example",
                "/help": "help", "/cancel": "menu"}
+    if command == "/menu":
+        send_screen(chat_id, "menu")
+        return
     if command in screens:
         send_screen(chat_id, screens[command])
         return

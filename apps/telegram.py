@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from html import escape
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -27,11 +28,16 @@ def bot_api(method, **payload):
         headers={"Content-Type": "application/x-www-form-urlencoded"},
         method="POST",
     )
+    started = time.monotonic()
     try:
         with urlopen(request, timeout=10) as response:
             result = json.loads(response.read())
     except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
         raise TelegramError("Telegram service is unavailable.") from exc
+    finally:
+        elapsed = time.monotonic() - started
+        if elapsed >= 2:
+            logger.warning("Telegram %s took %.2fs", method, elapsed)
     if not result.get("ok"):
         raise TelegramError(result.get("description", "Telegram rejected the request."))
     return result.get("result")
