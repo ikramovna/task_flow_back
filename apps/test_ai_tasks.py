@@ -13,7 +13,7 @@ from rest_framework.test import APITestCase, APITransactionTestCase
 from .ai_provider import AIUnavailable, extract_task, transcribe
 from .ai_tasks import create_ai_task
 from .models import AITaskRequest, Department, Notification, Task, TelegramIntegration, User
-from .telegram import TelegramError
+from .telegram import TelegramError, task_url
 
 
 class AITaskFixture:
@@ -114,6 +114,26 @@ class AITaskTests(AITaskFixture, APITestCase):
         self.assertEqual(response.status_code, 201, response.data)
         self.assertEqual(response.data["transcript"], transcriber.return_value)
         self.extractor.assert_called_once_with(transcriber.return_value)
+
+    @patch("apps.ai_tasks.transcribe", return_value="Muslima Zakirjonovaga saytni tuzatish")
+    def test_voice_recovers_one_surname_transcription_error(self, transcriber):
+        self.parsed["assignee"] = "Muslima Zakirjonova"
+        response = self.client.post("/api/v1/ai/tasks/", {
+            "request_id": str(uuid.uuid4()), "audio": SimpleUploadedFile("voice.ogg", b"audio"),
+        }, format="multipart")
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(Task.objects.get().main_assignee, self.assignee)
+
+    @patch("apps.ai_tasks.transcribe", return_value="Muslima Zikirjonovaga saytni tuzatish")
+    def test_voice_near_match_rejects_two_possible_assignees(self, transcriber):
+        User.objects.create_user(username="similar", email="similar@example.com",
+                                 first_name="Muslima", last_name="Zakirjonova", department=self.department)
+        self.parsed["assignee"] = "Muslima Zikirjonova"
+        response = self.client.post("/api/v1/ai/tasks/", {
+            "request_id": str(uuid.uuid4()), "audio": SimpleUploadedFile("voice.ogg", b"audio"),
+        }, format="multipart")
+        self.assertEqual(response.data["status"], "needs_clarification")
+        self.assertFalse(Task.objects.exists())
 
     def test_rejects_unsupported_audio_and_text_with_audio(self):
         for filename, text in [("file.txt", ""), ("voice.ogg", "task")]:
@@ -238,6 +258,9 @@ class TelegramAITaskTests(AITaskFixture, APITestCase):
         self.webhook()
         self.assertIn("Fix &lt;login&gt; &amp; signup", self.bot.call_args.kwargs["text"])
         self.assertIn("TASK CREATED", self.bot.call_args.kwargs["text"])
+        markup = json.loads(self.bot.call_args.kwargs["reply_markup"])
+        self.assertEqual(markup["inline_keyboard"][0][0]["url"],
+                         task_url(str(Task.objects.get().pk)))
 
     def test_unlinked_sender_and_group_cannot_create(self):
         self.message["from"]["id"] = 999
@@ -283,6 +306,16 @@ class TelegramAITaskTests(AITaskFixture, APITestCase):
         download.assert_called_once()
         transcriber.assert_called_once()
 
+    @patch("apps.telegram_tasks.download_voice")
+    @patch("apps.ai_tasks.transcribe", return_value="Muslima uchun vazifa")
+    def test_voice_clarification_shows_heard_words(self, transcriber, download):
+        download.return_value = SimpleUploadedFile("voice.ogg", b"audio")
+        self.parsed["assignee"] = "Unknown Person"
+        self.message.pop("text")
+        self.message["voice"] = {"file_id": "abc", "file_unique_id": "unique"}
+        self.webhook()
+        self.assertIn("<b>I heard:</b> Muslima uchun vazifa", self.bot.call_args.kwargs["text"])
+
 
 @override_settings(OPENAI_API_KEY="test", OPENAI_TASK_MODEL="gpt-5.4-mini", OPENAI_TRANSCRIPTION_MODEL="gpt-4o-mini-transcribe")
 class AIProviderTests(SimpleTestCase):
@@ -299,6 +332,7 @@ class AIProviderTests(SimpleTestCase):
         args = provider.call_args.args
         self.assertEqual(args[0], "audio/transcriptions")
         self.assertIn(b'filename="voice.ogg"', args[1])
+        self.assertIn(b'name="prompt"', args[1])
         self.assertIn(b"sample audio", args[1])
 
 

@@ -50,6 +50,8 @@ def transcribe(audio):
     body = (
         f'--{boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\n'
         f'{settings.OPENAI_TRANSCRIPTION_MODEL}\r\n'
+        f'--{boundary}\r\nContent-Disposition: form-data; name="prompt"\r\n\r\n'
+        'TaskFlow, vazifa, xodim, mas’ul, muddat, sentyabr, vebsayt, login.\r\n'
         f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="voice{extension}"\r\n'
         'Content-Type: application/octet-stream\r\n\r\n'
     ).encode() + audio.read(MAX_AUDIO_BYTES + 1) + f"\r\n--{boundary}--\r\n".encode()
@@ -80,6 +82,8 @@ def extract_task(text):
                 "but do not correct spelling or invent surnames. Use assignee='self' only for explicit self assignment. "
                 "project=null unless an explicit project is named. priority=medium unless specified. "
                 "due_date is YYYY-MM-DD or null if absent. For a date without year use its next occurrence including today. "
+                "The end of a named month (for example 'sentyabr oxiri', 'end of September', "
+                "'конец сентября') means its last calendar day; if no year is given use its next occurrence. "
                 "For relative dates use today in Asia/Tashkent: " + timezone.localdate().isoformat() + ". "
                 "If not a task creation request, multiple tasks, missing task/assignee, or ambiguous date, "
                 "return clarification in English asking for a complete corrected request; otherwise clarification=null."

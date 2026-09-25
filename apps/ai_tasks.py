@@ -57,7 +57,26 @@ def clarify(message, transcript):
     return {"status": "needs_clarification", "message": message, "transcript": transcript}
 
 
-def resolve_assignee(user, name):
+def one_edit_apart(left, right):
+    if abs(len(left) - len(right)) > 1:
+        return False
+    if len(left) > len(right):
+        left, right = right, left
+    index = 0
+    edits = 0
+    for char in right:
+        if index < len(left) and left[index] == char:
+            index += 1
+        else:
+            edits += 1
+            if edits > 1:
+                return False
+            if len(left) == len(right):
+                index += 1
+    return edits == 1
+
+
+def resolve_assignee(user, name, *, from_voice=False):
     candidates = User.objects.filter(is_active=True, department__isnull=False).select_related("department")
     if not (user.is_superuser or user.role in PRIVILEGED_TASK_ROLES or user.has_all_departments_access):
         candidates = candidates.filter(Q(department=user.department) | Q(department__users_with_access=user)).distinct()
@@ -69,11 +88,22 @@ def resolve_assignee(user, name):
         normalize(f"{candidate.last_name} {candidate.first_name}"),
         normalize(candidate.first_name), normalize(candidate.last_name),
     }]
-    # Exact unique matches only: similar spellings and duplicate names require clarification.
-    return matches[0] if len(matches) == 1 else None
+    if len(matches) == 1:
+        return matches[0]
+    if matches or not from_voice:
+        return None
+    # Speech recognition can change one letter of a surname. Limit recovery to
+    # an exact first name and one uniquely matching, sufficiently long surname.
+    parts = name.split()
+    if len(parts) != 2 or len(parts[1]) < 6:
+        return None
+    near_matches = [candidate for candidate in candidates
+                    if normalize(candidate.first_name) == parts[0]
+                    and one_edit_apart(parts[1], normalize(candidate.last_name))]
+    return near_matches[0] if len(near_matches) == 1 else None
 
 
-def build_task(user, transcript):
+def build_task(user, transcript, *, from_voice=False):
     parsed = extract_task(transcript)
     if parsed.get("clarification"):
         return clarify(parsed["clarification"][:1000], transcript)
@@ -81,7 +111,7 @@ def build_task(user, transcript):
     if not extracted.is_valid():
         return clarify("Please resend the complete request with a clear task, assignee and deadline.", transcript)
     data = extracted.validated_data
-    assignee = resolve_assignee(user, data["assignee"])
+    assignee = resolve_assignee(user, data["assignee"], from_voice=from_voice)
     if not assignee:
         return clarify("The assignee could not be uniquely identified. Please resend the complete task with their full name or email.", transcript)
     if data["due_date"] and data["due_date"] < timezone.localdate():
@@ -141,6 +171,6 @@ def create_ai_task(*, user, request_key, text="", audio=None, audio_loader=None,
         transcript = transcribe(audio) if audio is not None else text.strip()
         if not transcript or len(transcript) > 6000:
             raise serializers.ValidationError("The text must contain between 1 and 6000 characters.")
-        result = build_task(user, transcript)
+        result = build_task(user, transcript, from_voice=audio is not None)
         AITaskRequest.objects.create(user=user, request_key=request_key, fingerprint=fingerprint, result=result)
         return result

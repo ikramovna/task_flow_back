@@ -14,7 +14,7 @@ from rest_framework.exceptions import APIException, ValidationError
 from .ai_provider import MAX_AUDIO_BYTES
 from .ai_tasks import create_ai_task
 from .models import TelegramIntegration
-from .telegram import TelegramError, bot_api
+from .telegram import TelegramError, bot_api, task_url
 
 logger = logging.getLogger(__name__)
 
@@ -210,6 +210,8 @@ def handle_task_message(message):
         )
         reply = "<b>Let’s clarify a few details</b>\n\n" + escape(result["message"])
         markup = MENU
+        if voice and result["status"] == "needs_clarification" and result.get("transcript"):
+            reply += "\n\n<b>I heard:</b> " + escape(result["transcript"][:600])
         if result["status"] == "created":
             task = result["task"]
             reply = (
@@ -221,7 +223,7 @@ def handle_task_message(message):
                 "📌 <b>Status</b>  Not Started"
             )
             markup = json.dumps({"inline_keyboard": [
-                [{"text": "Open task", "url": f"{settings.FRONTEND_URL.rstrip('/')}/tasks/{result['task']['id']}"}],
+                [{"text": "Open task", "url": task_url(result["task"]["id"])}],
                 [{"text": "Create another task", "callback_data": "task:create"}],
             ]})
     except APIException as exc:

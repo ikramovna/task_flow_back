@@ -45,7 +45,8 @@ def bot_api(method, *, timeout=10, **payload):
 
 def task_url(task):
     base = settings.FRONTEND_URL.rstrip("/")
-    return f"{base}/tasks/{task.pk}"
+    task_id = getattr(task, "pk", task)
+    return f"{base}/?{urlencode({'task': str(task_id)})}#tasks"
 
 
 def notification_text(notification):
