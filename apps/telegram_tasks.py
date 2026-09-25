@@ -72,6 +72,7 @@ VOICE = (
     "<b>Hold the microphone button</b> in Telegram and describe:\n\n"
     "• What needs to be done\n• The assignee’s full name\n• The deadline, including the year\n"
     "• Priority and project, if needed\n\n"
+    "<i>You can speak Uzbek. The task title and description will be saved in English.</i>\n\n"
     "<i>Up to 5 minutes · 20 MB. Clear requests create a task immediately.</i>"
 )
 HELP = (

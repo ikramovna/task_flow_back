@@ -156,7 +156,8 @@ After deploying the inline-button update, register the webhook again using
 `POST /api/v1/telegram/setup-webhook/` so Telegram delivers `callback_query`
 updates as well as messages. Send `/start` to remove the old reply keyboard and
 display the English inline menu. Bot guidance, confirmations and errors are in
-English; task input can still be English, Uzbek or Russian.
+English; task input can still be English, Uzbek or Russian. The AI writes task
+titles and descriptions in English while preserving employee and project names.
 
 The bot also provides an English dashboard with **Create task**, **Voice task**,
 **Template**, **Example**, and **Help** screens. Each button acknowledges the press
