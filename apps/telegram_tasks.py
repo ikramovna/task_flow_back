@@ -211,8 +211,6 @@ def handle_task_message(message):
         )
         reply = "<b>Let’s clarify a few details</b>\n\n" + escape(result["message"])
         markup = MENU
-        if voice and result["status"] == "needs_clarification" and result.get("transcript"):
-            reply += "\n\n<b>I heard:</b> " + escape(result["transcript"][:600])
         if result["status"] == "created":
             task = result["task"]
             reply = (

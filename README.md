@@ -146,9 +146,10 @@ with its title, assignee, deadline, and link. Voice messages are limited to 5
 minutes and 20 MB. Unlinked users and group chats cannot create tasks. A repeated
 delivery of the same Telegram message reuses its stored result.
 For voice, transcription is guided with TaskFlow vocabulary and a uniquely
-matched assignee may differ by one surname letter. If the request still needs
-clarification, the bot shows the words it heard so the user can resend the
-complete corrected task. "End of September" and equivalent named-month
+matched assignee may differ by one letter in either the first name or surname.
+If uploaded audio still needs clarification, both Tiko and Telegram show the
+words heard and the assignee name interpreted by the AI so the user can resend
+the complete corrected task. "End of September" and equivalent named-month
 phrases mean the last calendar day of that month. Task links go directly to
 the frontend's `/?task=<id>#tasks` route.
 

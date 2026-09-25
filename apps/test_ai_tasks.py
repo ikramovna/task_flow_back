@@ -124,6 +124,15 @@ class AITaskTests(AITaskFixture, APITestCase):
         self.assertEqual(response.status_code, 201, response.data)
         self.assertEqual(Task.objects.get().main_assignee, self.assignee)
 
+    @patch("apps.ai_tasks.transcribe", return_value="Muslama Zokirjonovaga saytni tuzatish")
+    def test_voice_recovers_one_first_name_transcription_error(self, transcriber):
+        self.parsed["assignee"] = "Muslama Zokirjonova"
+        response = self.client.post("/api/v1/ai/tasks/", {
+            "request_id": str(uuid.uuid4()), "audio": SimpleUploadedFile("voice.ogg", b"audio"),
+        }, format="multipart")
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(Task.objects.get().main_assignee, self.assignee)
+
     @patch("apps.ai_tasks.transcribe", return_value="Muslima Zikirjonovaga saytni tuzatish")
     def test_voice_near_match_rejects_two_possible_assignees(self, transcriber):
         User.objects.create_user(username="similar", email="similar@example.com",
@@ -133,6 +142,17 @@ class AITaskTests(AITaskFixture, APITestCase):
             "request_id": str(uuid.uuid4()), "audio": SimpleUploadedFile("voice.ogg", b"audio"),
         }, format="multipart")
         self.assertEqual(response.data["status"], "needs_clarification")
+        self.assertFalse(Task.objects.exists())
+
+    @patch("apps.ai_tasks.transcribe", return_value="Muslima Zakirovaga saytni tuzatish")
+    def test_uploaded_audio_clarification_reports_heard_name_and_transcript(self, transcriber):
+        self.parsed["assignee"] = "Muslima Zakirova"
+        response = self.client.post("/api/v1/ai/tasks/", {
+            "request_id": str(uuid.uuid4()), "audio": SimpleUploadedFile("voice.ogg", b"audio"),
+        }, format="multipart")
+        self.assertEqual(response.data["status"], "needs_clarification")
+        self.assertIn("Muslima Zakirova", response.data["message"])
+        self.assertIn("I heard: Muslima Zakirovaga saytni tuzatish", response.data["message"])
         self.assertFalse(Task.objects.exists())
 
     def test_rejects_unsupported_audio_and_text_with_audio(self):
@@ -314,7 +334,7 @@ class TelegramAITaskTests(AITaskFixture, APITestCase):
         self.message.pop("text")
         self.message["voice"] = {"file_id": "abc", "file_unique_id": "unique"}
         self.webhook()
-        self.assertIn("<b>I heard:</b> Muslima uchun vazifa", self.bot.call_args.kwargs["text"])
+        self.assertIn("I heard: Muslima uchun vazifa", self.bot.call_args.kwargs["text"])
 
 
 @override_settings(OPENAI_API_KEY="test", OPENAI_TASK_MODEL="gpt-5.4-mini", OPENAI_TRANSCRIPTION_MODEL="gpt-4o-mini-transcribe")

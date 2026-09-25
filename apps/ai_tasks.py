@@ -92,14 +92,16 @@ def resolve_assignee(user, name, *, from_voice=False):
         return matches[0]
     if matches or not from_voice:
         return None
-    # Speech recognition can change one letter of a surname. Limit recovery to
-    # an exact first name and one uniquely matching, sufficiently long surname.
+    # Speech recognition can change one letter of a name. Only recover a
+    # uniquely matching full name when the other name part is exact.
     parts = name.split()
-    if len(parts) != 2 or len(parts[1]) < 6:
+    if len(parts) != 2 or len(parts[0]) < 5 or len(parts[1]) < 6:
         return None
     near_matches = [candidate for candidate in candidates
-                    if normalize(candidate.first_name) == parts[0]
-                    and one_edit_apart(parts[1], normalize(candidate.last_name))]
+                    if (normalize(candidate.first_name) == parts[0]
+                        and one_edit_apart(parts[1], normalize(candidate.last_name)))
+                    or (normalize(candidate.last_name) == parts[1]
+                        and one_edit_apart(parts[0], normalize(candidate.first_name)))]
     return near_matches[0] if len(near_matches) == 1 else None
 
 
@@ -113,7 +115,8 @@ def build_task(user, transcript, *, from_voice=False):
     data = extracted.validated_data
     assignee = resolve_assignee(user, data["assignee"], from_voice=from_voice)
     if not assignee:
-        return clarify("The assignee could not be uniquely identified. Please resend the complete task with their full name or email.", transcript)
+        return clarify(f"The assignee was read as '{data['assignee'][:120]}' but could not be uniquely identified. "
+                       "Please resend the complete task with their full name or email.", transcript)
     if data["due_date"] and data["due_date"] < timezone.localdate():
         return clarify("The deadline is in the past. Please resend the complete task with a future date, including the year.", transcript)
     project = None
@@ -172,5 +175,7 @@ def create_ai_task(*, user, request_key, text="", audio=None, audio_loader=None,
         if not transcript or len(transcript) > 6000:
             raise serializers.ValidationError("The text must contain between 1 and 6000 characters.")
         result = build_task(user, transcript, from_voice=audio is not None)
+        if audio is not None and result["status"] == "needs_clarification":
+            result["message"] += f"\n\nI heard: {transcript[:600]}"
         AITaskRequest.objects.create(user=user, request_key=request_key, fingerprint=fingerprint, result=result)
         return result
