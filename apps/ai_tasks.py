@@ -34,7 +34,7 @@ class AITaskInputSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         if bool(attrs.get("text")) == bool(attrs.get("audio")):
-            raise serializers.ValidationError("Faqat matn yoki bitta ovoz fayli yuboring.")
+            raise serializers.ValidationError("Send either text or one audio file.")
         return attrs
 
 
@@ -79,19 +79,19 @@ def build_task(user, transcript):
         return clarify(parsed["clarification"][:1000], transcript)
     extracted = ExtractedTaskSerializer(data=parsed)
     if not extracted.is_valid():
-        return clarify("Vazifa, xodim va sanani aniq qilib to‘liq qayta yuboring.", transcript)
+        return clarify("Please resend the complete request with a clear task, assignee and deadline.", transcript)
     data = extracted.validated_data
     assignee = resolve_assignee(user, data["assignee"])
     if not assignee:
-        return clarify("Xodim aniq topilmadi. To‘liq ism-familiya yoki email bilan vazifani qayta yuboring.", transcript)
+        return clarify("The assignee could not be uniquely identified. Please resend the complete task with their full name or email.", transcript)
     if data["due_date"] and data["due_date"] < timezone.localdate():
-        return clarify("Muddat o‘tib ketgan. Kelajakdagi sanani yil bilan yozib, vazifani qayta yuboring.", transcript)
+        return clarify("The deadline is in the past. Please resend the complete task with a future date, including the year.", transcript)
     project = None
     if data["project"]:
         projects = Project.objects.filter(department=assignee.department).exclude(status=Project.Status.ARCHIVED)
         matches = [item for item in projects if normalize(item.name) == normalize(data["project"])]
         if len(matches) != 1:
-            return clarify("Loyiha aniq topilmadi. Loyiha nomini aniqlashtirib, vazifani qayta yuboring.", transcript)
+            return clarify("The project could not be uniquely identified. Please resend the complete task with the exact project name.", transcript)
         project = matches[0]
     serializer = TaskSerializer(data={
         "title": data["title"], "description": data["description"],
@@ -102,8 +102,8 @@ def build_task(user, transcript):
     task = save_task(serializer, user)
     return {
         "status": "created", "transcript": transcript,
-        "message": f"Task yaratildi: {task.title}\nMas’ul: {assignee.get_full_name() or assignee.email}\n"
-                   f"Deadline: {task.due_date or 'belgilanmagan'}",
+        "message": f"Task created: {task.title}\nAssigned to: {assignee.get_full_name() or assignee.email}\n"
+                   f"Deadline: {task.due_date or 'Not specified'}",
         "task": {
             "id": str(task.pk), "title": task.title, "description": task.description,
             "assignees": [assignee.pk], "main_assignee": assignee.pk,
@@ -117,7 +117,7 @@ def build_task(user, transcript):
 
 def create_ai_task(*, user, request_key, text="", audio=None, audio_loader=None, source_identity=""):
     if not user.is_active:
-        raise PermissionDenied("Faqat faol foydalanuvchi task yarata oladi.")
+        raise PermissionDenied("Only active users can create tasks.")
     if audio is not None:
         validate_audio(audio)
         content = audio.read()
@@ -130,17 +130,17 @@ def create_ai_task(*, user, request_key, text="", audio=None, audio_loader=None,
     with transaction.atomic():
         user = User.objects.select_for_update().get(pk=user.pk)
         if not user.is_active:
-            raise PermissionDenied("Foydalanuvchi faol emas.")
+            raise PermissionDenied("This account is inactive.")
         previous = AITaskRequest.objects.filter(user=user, request_key=request_key).first()
         if previous:
             if previous.fingerprint != fingerprint:
-                raise serializers.ValidationError({"request_id": "Bu ID boshqa so‘rov uchun ishlatilgan."})
+                raise serializers.ValidationError({"request_id": "This request ID has already been used for different content."})
             return previous.result
         if audio_loader is not None:
             audio = audio_loader()
         transcript = transcribe(audio) if audio is not None else text.strip()
         if not transcript or len(transcript) > 6000:
-            raise serializers.ValidationError("Matn 1–6000 belgidan iborat bo‘lishi kerak.")
+            raise serializers.ValidationError("The text must contain between 1 and 6000 characters.")
         result = build_task(user, transcript)
         AITaskRequest.objects.create(user=user, request_key=request_key, fingerprint=fingerprint, result=result)
         return result

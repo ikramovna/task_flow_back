@@ -16,12 +16,12 @@ AUDIO_EXTENSIONS = {".ogg", ".mp3", ".mp4", ".mpeg", ".mpga", ".m4a", ".wav", ".
 
 class AIUnavailable(APIException):
     status_code = 503
-    default_detail = "AI xizmati hozir mavjud emas. Keyinroq qayta urinib ko‘ring."
+    default_detail = "The AI service is currently unavailable. Please try again later."
 
 
 def request_ai(path, body, content_type="application/json"):
     if not settings.OPENAI_API_KEY:
-        raise AIUnavailable("AI sozlanmagan: OPENAI_API_KEY kerak.")
+        raise AIUnavailable("The AI service is not configured. Please contact your administrator.")
     request = Request(
         f"https://api.openai.com/v1/{path}", data=body,
         headers={"Authorization": f"Bearer {settings.OPENAI_API_KEY}", "Content-Type": content_type},
@@ -37,9 +37,9 @@ def request_ai(path, body, content_type="application/json"):
 
 def validate_audio(audio):
     if not 0 < audio.size <= MAX_AUDIO_BYTES:
-        raise ValidationError({"audio": "Ovoz fayli 0–20 MB oralig‘ida bo‘lishi kerak."})
+        raise ValidationError({"audio": "The audio file must be non-empty and no larger than 20 MB."})
     if Path(audio.name).suffix.lower() not in AUDIO_EXTENSIONS:
-        raise ValidationError({"audio": "OGG, MP3, MP4, M4A, WAV, WEBM yoki FLAC yuboring."})
+        raise ValidationError({"audio": "Upload an OGG, MP3, MP4, MPEG, MPGA, M4A, WAV, WEBM or FLAC file."})
     return audio
 
 
@@ -56,7 +56,7 @@ def transcribe(audio):
     result = request_ai("audio/transcriptions", body, f"multipart/form-data; boundary={boundary}")
     text = result.get("text") if isinstance(result, dict) else None
     if not isinstance(text, str) or not text.strip():
-        raise ValidationError({"audio": "Ovozdan matn aniqlanmadi. Qayta yozing."})
+        raise ValidationError({"audio": "No speech was detected. Please record your message again."})
     return text.strip()
 
 
@@ -82,7 +82,7 @@ def extract_task(text):
                 "due_date is YYYY-MM-DD or null if absent. For a date without year use its next occurrence including today. "
                 "For relative dates use today in Asia/Tashkent: " + timezone.localdate().isoformat() + ". "
                 "If not a task creation request, multiple tasks, missing task/assignee, or ambiguous date, "
-                "return clarification in Uzbek asking for a complete corrected request; otherwise clarification=null."
+                "return clarification in English asking for a complete corrected request; otherwise clarification=null."
             )},
             {"role": "user", "content": text},
         ],
@@ -105,4 +105,4 @@ def extract_task(text):
                 raise ValueError("Invalid field type")
         return data
     except (KeyError, IndexError, TypeError, ValueError) as exc:
-        raise AIUnavailable("AI javobini o‘qib bo‘lmadi. Qayta urinib ko‘ring.") from exc
+        raise AIUnavailable("The AI response could not be processed. Please try again.") from exc

@@ -136,7 +136,7 @@ APIs. Model availability depends on the configured API account.
 ### Telegram
 
 Connect the account through the Profile link as described above. In a private
-bot chat, `/start` displays **Task yaratish**. Press it (or send `/create`), then
+bot chat, `/start` displays an inline **Create task** button. Press it (or send `/create`), then
 send text or a voice message, for example:
 
 > Muslima Zokirjonovaga websiteni fix qilsin, deadline 23 may.
@@ -145,6 +145,12 @@ The bot creates a task, assigns the uniquely matched active employee, and replie
 with its title, assignee, deadline, and link. Voice messages are limited to 5
 minutes and 20 MB. Unlinked users and group chats cannot create tasks. A repeated
 delivery of the same Telegram message reuses its stored result.
+
+After deploying the inline-button update, register the webhook again using
+`POST /api/v1/telegram/setup-webhook/` so Telegram delivers `callback_query`
+updates as well as messages. Send `/start` to remove the old reply keyboard and
+display the English inline menu. Bot guidance, confirmations and errors are in
+English; task input can still be English, Uzbek or Russian.
 
 ### Tiko frontend integration
 

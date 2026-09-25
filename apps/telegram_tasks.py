@@ -13,31 +13,63 @@ from .models import TelegramIntegration
 from .telegram import TelegramError, bot_api
 
 
-MENU = json.dumps({"keyboard": [[{"text": "Task yaratish"}]], "resize_keyboard": True})
+MENU = json.dumps({"inline_keyboard": [[{"text": "Create task", "callback_data": "task:create"}]]})
 PROMPT = (
-    "Task yaratish uchun matn yoki ovoz yuboring. Masalan: "
-    "Muslima Zokirjonovaga websiteni fix qilish, deadline 23 may. "
-    "Xodim topilmasa, to‘liq ism yoki email bilan vazifani qayta yuboring."
+    "Create a task with Tiko\n\n"
+    "Send a text or voice message describing the task, who should do it, and the deadline.\n\n"
+    "Example:\n"
+    "Assign Muslima Zokirjonova a task to fix the website's login page. "
+    "Resolve the sign-in error and check that users can log in on both desktop and mobile. "
+    "Set the deadline to 23 May next year and the priority to high.\n\n"
+    "Use an existing employee's full name or email. You can write or speak in English, Uzbek, or Russian. "
+    "If anything is unclear, I will ask you to resend the complete request with the missing details."
 )
+
+
+def send_menu(chat_id, text="Welcome to Tiko! Choose Create task to get started."):
+    # Remove the old persistent keyboard before sending the new inline menu.
+    bot_api("sendMessage", chat_id=chat_id, text=text,
+            reply_markup=json.dumps({"remove_keyboard": True}))
+    bot_api("sendMessage", chat_id=chat_id, text="What would you like to do?", reply_markup=MENU)
+
+
+def handle_task_callback(callback):
+    message = callback.get("message") or {}
+    chat = message.get("chat") or {}
+    sender = callback.get("from") or {}
+    if not callback.get("id"):
+        return
+    connected = (chat.get("type") == "private" and sender.get("id") and
+                 TelegramIntegration.objects.filter(
+                     telegram_user_id=sender["id"], telegram_chat_id=chat.get("id"),
+                     is_connected=True, user__is_active=True,
+                 ).exists())
+    if not connected:
+        bot_api("answerCallbackQuery", callback_query_id=callback["id"],
+                text="Connect Telegram from your TaskFlow profile first.", show_alert=True)
+        return
+    bot_api("answerCallbackQuery", callback_query_id=callback["id"])
+    if callback.get("data") == "task:create":
+        bot_api("sendMessage", chat_id=chat["id"], text=PROMPT, reply_markup=MENU)
 
 
 def download_voice(voice):
     if voice.get("file_size", 0) > MAX_AUDIO_BYTES or voice.get("duration", 0) > 300:
-        raise ValidationError("Ovoz 20 MB va 5 daqiqadan oshmasligi kerak.")
+        raise ValidationError("Voice messages must not exceed 20 MB or 5 minutes.")
     file_id = voice.get("file_id")
     if not isinstance(file_id, str) or not file_id:
-        raise ValidationError("Ovoz fayli topilmadi.")
+        raise ValidationError("The voice file could not be found.")
     result = bot_api("getFile", file_id=file_id)
     path = result.get("file_path", "") if isinstance(result, dict) else ""
     if not re.fullmatch(r"[a-zA-Z0-9_/-]+\.[a-zA-Z0-9]+", path) or ".." in path:
-        raise TelegramError("Telegram ovoz faylini yuklab bo‘lmadi.")
+        raise TelegramError("The Telegram voice file could not be downloaded.")
     try:
         with urlopen(f"https://api.telegram.org/file/bot{settings.TELEGRAM_BOT_TOKEN}/{path}", timeout=20) as response:
             content = response.read(MAX_AUDIO_BYTES + 1)
     except (URLError, TimeoutError, OSError) as exc:
-        raise TelegramError("Telegram ovoz faylini yuklab bo‘lmadi.") from exc
+        raise TelegramError("The Telegram voice file could not be downloaded.") from exc
     if len(content) > MAX_AUDIO_BYTES:
-        raise ValidationError("Ovoz 20 MB dan oshmasligi kerak.")
+        raise ValidationError("Voice messages must not exceed 20 MB.")
     # Telegram voice messages use OGG/Opus, sometimes with an .oga filename.
     return SimpleUploadedFile("voice.ogg", content, content_type="audio/ogg")
 
@@ -56,7 +88,10 @@ def handle_task_message(message):
         bot_api("sendMessage", chat_id=chat_id, text="Open TaskFlow → Profile → Connect Telegram first.")
         return
     text = message.get("text", "").strip()
-    if text in {"/start", "/help", "/create", "Task yaratish", "/cancel"}:
+    if text in {"/start", "Task yaratish"}:
+        send_menu(chat_id)
+        return
+    if text in {"/help", "/create", "Create task", "/cancel"}:
         bot_api("sendMessage", chat_id=chat_id, text=PROMPT, reply_markup=MENU)
         return
     voice = message.get("voice")
@@ -72,9 +107,14 @@ def handle_task_message(message):
             source_identity=voice.get("file_unique_id", voice.get("file_id", "")) if voice else "",
         )
         reply = result["message"]
+        markup = MENU
         if result["status"] == "created":
-            reply += f"\n{settings.FRONTEND_URL.rstrip('/')}/tasks/{result['task']['id']}"
+            markup = json.dumps({"inline_keyboard": [
+                [{"text": "Open task", "url": f"{settings.FRONTEND_URL.rstrip('/')}/tasks/{result['task']['id']}"}],
+                [{"text": "Create another task", "callback_data": "task:create"}],
+            ]})
     except APIException as exc:
         # A failed analysis rolls back the receipt so a fresh message can retry.
         reply = str(exc.detail)[:1500]
-    bot_api("sendMessage", chat_id=chat_id, text=reply, reply_markup=MENU)
+        markup = MENU
+    bot_api("sendMessage", chat_id=chat_id, text=reply, reply_markup=markup)

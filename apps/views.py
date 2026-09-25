@@ -38,7 +38,7 @@ from .task_visibility import PRIVILEGED_TASK_ROLES, visible_tasks_for
 from .reporting import REPORT_TEMPLATES, build_report_docx, build_report_result
 from .task_creation import ensure_task_creator, save_task
 from .ai_tasks import AITaskInputSerializer, create_ai_task
-from .telegram_tasks import handle_task_message, MENU
+from .telegram_tasks import handle_task_message, handle_task_callback, send_menu
 
 
 class PasswordResetRequestView(generics.GenericAPIView):
@@ -1655,6 +1655,13 @@ class TelegramWebhookView(APIView):
         if not expected or not secrets.compare_digest(supplied, expected):
             return Response(status=status.HTTP_403_FORBIDDEN)
 
+        if request.data.get("callback_query"):
+            try:
+                handle_task_callback(request.data["callback_query"])
+            except TelegramError:
+                return Response({"ok": False}, status=502)
+            return Response({"ok": True})
+
         message = request.data.get("message") or {}
         text = message.get("text", "")
         chat = message.get("chat") or {}
@@ -1687,7 +1694,7 @@ class TelegramWebhookView(APIView):
             integration.link_token = None
             integration.link_token_expires_at = None
             integration.save()
-            bot_api("sendMessage", chat_id=chat_id, text="✅ Telegram successfully connected to TaskFlow. Task yaratish tugmasini bosing.", reply_markup=MENU)
+            send_menu(chat_id, "✅ Telegram successfully connected to TaskFlow.")
         else:
             try:
                 handle_task_message(message)
@@ -1709,7 +1716,7 @@ class TelegramWebhookSetupView(APIView):
                 "setWebhook",
                 url=webhook_url(request),
                 secret_token=settings.TELEGRAM_WEBHOOK_SECRET,
-                allowed_updates='["message"]',
+                allowed_updates='["message", "callback_query"]',
             )
         except TelegramError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
