@@ -1,6 +1,6 @@
 import json
+import logging
 import re
-from concurrent.futures import ThreadPoolExecutor
 from html import escape
 
 from django.utils import timezone
@@ -16,6 +16,7 @@ from .ai_tasks import create_ai_task
 from .models import TelegramIntegration
 from .telegram import TelegramError, bot_api
 
+logger = logging.getLogger(__name__)
 
 MENU = json.dumps({"inline_keyboard": [
     [{"text": "✍️ Create task", "callback_data": "task:create"},
@@ -104,18 +105,10 @@ def screen_text(screen):
             "voice": VOICE, "help": HELP}[screen]
 
 
-def send_screen(chat_id, screen, message_id=None):
+def send_screen(chat_id, screen):
     payload = {"chat_id": chat_id, "text": screen_text(screen), "parse_mode": "HTML",
                "reply_markup": MENU if screen == "menu" else BACK_MENU}
-    if message_id:
-        # Edit the menu in place so navigation does not flood the conversation.
-        try:
-            bot_api("editMessageText", message_id=message_id, **payload)
-        except TelegramError as exc:
-            if "message is not modified" not in str(exc).lower():
-                raise
-    else:
-        bot_api("sendMessage", **payload)
+    bot_api("sendMessage", **payload)
 
 
 def send_menu(chat_id, text="Welcome to Tiko! Your task assistant is ready."):
@@ -140,16 +133,14 @@ def handle_task_callback(callback):
                 text="Connect Telegram from your TaskFlow profile first.", show_alert=True)
         return
     screen = str(callback.get("data", "")).removeprefix("task:")
-    if screen in {"menu", "create", "voice", "template", "example", "help"}:
-        # Telegram's spinner and the edited menu can be updated independently.
-        # Start both network calls together instead of waiting for two round trips.
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            acknowledged = pool.submit(bot_api, "answerCallbackQuery", callback_query_id=callback["id"])
-            updated = pool.submit(send_screen, chat["id"], screen, message.get("message_id"))
-            acknowledged.result()
-            updated.result()
-    else:
+    # Clear Telegram's loading indicator before sending the requested screen.
+    # Expired callback IDs should not prevent the user from getting a response.
+    try:
         bot_api("answerCallbackQuery", callback_query_id=callback["id"])
+    except TelegramError:
+        logger.warning("Could not acknowledge Telegram menu callback")
+    if screen in {"menu", "create", "voice", "template", "example", "help"}:
+        send_screen(chat["id"], screen)
 
 
 def download_voice(voice):

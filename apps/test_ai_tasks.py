@@ -2,7 +2,6 @@ import json
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
-from threading import Barrier
 from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -163,25 +162,12 @@ class TelegramAITaskTests(AITaskFixture, APITestCase):
                                     format="json", HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="secret")
         self.assertEqual(response.status_code, 200)
         calls = {call.args[0]: call.kwargs for call in self.bot.call_args_list}
-        self.assertEqual(set(calls), {"answerCallbackQuery", "editMessageText"})
-        self.assertEqual(calls["editMessageText"]["parse_mode"], "HTML")
-        self.assertIn("CREATE A TASK", calls["editMessageText"]["text"])
+        self.assertEqual([call.args[0] for call in self.bot.call_args_list],
+                         ["answerCallbackQuery", "sendMessage"])
+        self.assertEqual(calls["sendMessage"]["parse_mode"], "HTML")
+        self.assertIn("CREATE A TASK", calls["sendMessage"]["text"])
         self.extractor.assert_not_called()
         self.assertFalse(Task.objects.exists())
-
-    def test_callback_telegram_requests_start_together(self):
-        rendezvous = Barrier(2, timeout=2)
-
-        def telegram_call(method, **kwargs):
-            if method in {"answerCallbackQuery", "editMessageText"}:
-                rendezvous.wait()
-
-        self.bot.side_effect = telegram_call
-        callback = {"id": "cb-parallel", "from": {"id": 101}, "message": self.message,
-                    "data": "task:create"}
-        response = self.client.post("/api/v1/telegram/webhook/", {"callback_query": callback},
-                                    format="json", HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="secret")
-        self.assertEqual(response.status_code, 200)
 
     def test_inline_callback_rejects_unlinked_sender(self):
         callback = {"id": "cb2", "from": {"id": 999}, "message": self.message, "data": "task:create"}
@@ -212,8 +198,8 @@ class TelegramAITaskTests(AITaskFixture, APITestCase):
                 response = self.client.post("/api/v1/telegram/webhook/", {"callback_query": callback},
                                             format="json", HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="secret")
                 self.assertEqual(response.status_code, 200)
-                edits = [call for call in self.bot.call_args_list if call.args[0] == "editMessageText"]
-                self.assertIn(heading, edits[-1].kwargs["text"])
+                sent = [call for call in self.bot.call_args_list if call.args[0] == "sendMessage"]
+                self.assertIn(heading, sent[-1].kwargs["text"])
         self.extractor.assert_not_called()
         self.assertFalse(Task.objects.exists())
 
@@ -222,15 +208,26 @@ class TelegramAITaskTests(AITaskFixture, APITestCase):
         self.webhook()
         self.assertIn("<pre>Create a task:", self.bot.call_args.kwargs["text"])
         self.assertIn("[Full name or email]", self.bot.call_args.kwargs["text"])
-        def already_shown(method, **kwargs):
-            if method == "editMessageText":
-                raise TelegramError("Bad Request: message is not modified")
-        self.bot.side_effect = already_shown
         callback = {"id": "cb", "from": {"id": 101}, "message": self.message, "data": "task:template"}
+        for _ in range(2):
+            response = self.client.post("/api/v1/telegram/webhook/", {"callback_query": callback},
+                                        format="json", HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="secret")
+            self.assertEqual(response.status_code, 200)
+        self.assertEqual([call.args[0] for call in self.bot.call_args_list[-4:]],
+                         ["answerCallbackQuery", "sendMessage", "answerCallbackQuery", "sendMessage"])
+        self.extractor.assert_not_called()
+
+    def test_expired_callback_still_sends_selected_screen(self):
+        def bot_result(method, **kwargs):
+            if method == "answerCallbackQuery":
+                raise TelegramError("query is too old")
+        self.bot.side_effect = bot_result
+        callback = {"id": "old", "from": {"id": 101}, "message": self.message, "data": "task:example"}
         response = self.client.post("/api/v1/telegram/webhook/", {"callback_query": callback},
                                     format="json", HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="secret")
         self.assertEqual(response.status_code, 200)
-        self.extractor.assert_not_called()
+        self.assertEqual(self.bot.call_args.args[0], "sendMessage")
+        self.assertIn("EXAMPLE TASK", self.bot.call_args.kwargs["text"])
 
     def test_task_confirmation_escapes_html(self):
         self.parsed["title"] = "Fix <login> & signup"

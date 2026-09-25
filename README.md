@@ -153,16 +153,17 @@ display the English inline menu. Bot guidance, confirmations and errors are in
 English; task input can still be English, Uzbek or Russian.
 
 The bot also provides an English dashboard with **Create task**, **Voice task**,
-**Template**, **Example**, and **Help** screens. Inline navigation edits the same
-message; `/menu` opens a fresh dashboard. Templates and examples use copyable
+**Template**, **Example**, and **Help** screens. Each button acknowledges the press
+and sends a fresh screen so repeated selections remain visible. `/menu` opens a
+fresh dashboard. Templates and examples use copyable
 code blocks. Task confirmations display the assignee, deadline and priority.
 Register the webhook again after deploying this menu update: setup also runs
 `setMyCommands` and `setChatMenuButton` to enable Telegram's native **Menu** button
 next to the message composer. This is a native bot menu, not a Mini App, and
 requires no frontend deployment or extra website.
 
-`/menu` sends one Telegram request; inline callbacks acknowledge the press and
-edit the menu concurrently. Telegram API calls taking at least two seconds are
+`/menu` sends one Telegram request; inline callbacks acknowledge the press before
+sending the selected screen. Telegram API calls taking at least two seconds are
 logged as `Telegram <method> took <seconds>s` without message text or tokens, so
 production logs can distinguish Telegram network delay from AI processing time.
 
