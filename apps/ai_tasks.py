@@ -4,6 +4,7 @@ import re
 import secrets
 import unicodedata
 import uuid
+from difflib import SequenceMatcher
 from datetime import timedelta
 from types import SimpleNamespace
 
@@ -110,52 +111,114 @@ def resolve_task_target(user, target):
     return recent.first() if recent.count() == 1 else None
 
 
-def one_edit_apart(left, right):
-    if abs(len(left) - len(right)) > 1:
-        return False
-    if len(left) > len(right):
-        left, right = right, left
-    index = 0
-    edits = 0
-    for char in right:
-        if index < len(left) and left[index] == char:
-            index += 1
-        else:
-            edits += 1
-            if edits > 1:
-                return False
-            if len(left) == len(right):
-                index += 1
-    return edits == 1
+CYRILLIC_NAME_LETTERS = str.maketrans({
+    "а": "a", "б": "b", "в": "v", "г": "g", "ғ": "g", "д": "d", "е": "e",
+    "ё": "yo", "ж": "j", "з": "z", "и": "i", "й": "y", "к": "k", "қ": "q",
+    "л": "l", "м": "m", "н": "n", "о": "o", "п": "p", "р": "r", "с": "s",
+    "т": "t", "у": "u", "ў": "o", "ф": "f", "х": "x", "ҳ": "h", "ц": "ts",
+    "ч": "ch", "ш": "sh", "щ": "sh", "ъ": "", "ы": "i", "ь": "", "э": "e",
+    "ю": "yu", "я": "ya",
+})
 
 
-def resolve_assignee(user, name, *, from_voice=False):
+def normalize_person(value):
+    return normalize(value.casefold().translate(CYRILLIC_NAME_LETTERS))
+
+
+def name_spellings(value):
+    """Try the spoken form and common Uzbek case endings without changing stored names."""
+    base = normalize_person(value)
+    spellings = {base}
+    parts = base.split()
+    if len(parts) == 2:
+        for ending in ("ga", "ni", "dan", "ning"):
+            if parts[-1].endswith(ending) and len(parts[-1]) > len(ending) + 4:
+                spellings.add(f"{parts[0]} {parts[-1][:-len(ending)]}")
+    return spellings
+
+
+def edit_distance(left, right, maximum=2):
+    if abs(len(left) - len(right)) > maximum:
+        return maximum + 1
+    previous = list(range(len(right) + 1))
+    for row, char in enumerate(left, 1):
+        current = [row]
+        for column, other in enumerate(right, 1):
+            current.append(min(current[-1] + 1, previous[column] + 1,
+                               previous[column - 1] + (char != other)))
+        previous = current
+    return previous[-1]
+
+
+def nearby_assignees(candidates, spoken_name):
+    """Return safe, uniquely close full-name matches for voice requests only."""
+    matches = []
+    for spelling in name_spellings(spoken_name):
+        parts = spelling.split()
+        if len(parts) != 2:
+            continue
+        for candidate in candidates:
+            first = normalize_person(candidate.first_name)
+            last = normalize_person(candidate.last_name)
+            if not first or not last:
+                continue
+            for spoken_first, spoken_last in (parts, parts[::-1]):
+                if first == spoken_first and len(last) >= 6:
+                    distance = edit_distance(last, spoken_last)
+                    limit = 2 if len(last) >= 9 else 1
+                elif last == spoken_last and len(first) >= 5:
+                    distance = edit_distance(first, spoken_first)
+                    limit = 2 if len(first) >= 9 else 1
+                else:
+                    continue
+                if distance <= limit:
+                    matches.append(candidate)
+    return {candidate.pk: candidate for candidate in matches}
+
+
+def suggest_assignees(user, spoken_name, *, limit=3):
+    candidates = available_assignees(user)
+    parts = normalize_person(spoken_name).split()
+    if len(parts) != 2:
+        return []
+    scored = []
+    for candidate in candidates:
+        first = normalize_person(candidate.first_name)
+        last = normalize_person(candidate.last_name)
+        if not first or not last:
+            continue
+        score = max(SequenceMatcher(None, " ".join(parts), f"{first} {last}").ratio(),
+                    SequenceMatcher(None, " ".join(parts), f"{last} {first}").ratio())
+        if score >= 0.65:
+            scored.append((score, candidate.get_full_name()))
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    return [name for _, name in scored[:limit]]
+
+
+def available_assignees(user):
     candidates = User.objects.filter(is_active=True, department__isnull=False).select_related("department")
     if not (user.is_superuser or user.role in PRIVILEGED_TASK_ROLES or user.has_all_departments_access):
         candidates = candidates.filter(Q(department=user.department) | Q(department__users_with_access=user)).distinct()
+    return candidates
+
+
+def resolve_assignee(user, name, *, from_voice=False):
+    candidates = list(available_assignees(user))
     if name == "self":
         return user if user.department_id else None
-    name = normalize(name)
-    matches = [candidate for candidate in candidates if name in {
-        normalize(candidate.email), normalize(candidate.get_full_name()),
-        normalize(f"{candidate.last_name} {candidate.first_name}"),
-        normalize(candidate.first_name), normalize(candidate.last_name),
+    spellings = name_spellings(name)
+    matches = [candidate for candidate in candidates if spellings & {
+        normalize_person(candidate.email), normalize_person(candidate.get_full_name()),
+        normalize_person(f"{candidate.last_name} {candidate.first_name}"),
+        normalize_person(candidate.first_name), normalize_person(candidate.last_name),
+        normalize_person(candidate.username),
     }]
     if len(matches) == 1:
         return matches[0]
     if matches or not from_voice:
         return None
-    # Speech recognition can change one letter of a name. Only recover a
-    # uniquely matching full name when the other name part is exact.
-    parts = name.split()
-    if len(parts) != 2 or len(parts[0]) < 5 or len(parts[1]) < 6:
-        return None
-    near_matches = [candidate for candidate in candidates
-                    if (normalize(candidate.first_name) == parts[0]
-                        and one_edit_apart(parts[1], normalize(candidate.last_name)))
-                    or (normalize(candidate.last_name) == parts[1]
-                        and one_edit_apart(parts[0], normalize(candidate.first_name)))]
-    return near_matches[0] if len(near_matches) == 1 else None
+    near_matches = nearby_assignees(candidates, name)
+    return next(iter(near_matches.values())) if len(near_matches) == 1 else None
 
 
 def build_task(user, transcript, *, from_voice=False):
@@ -168,8 +231,10 @@ def build_task(user, transcript, *, from_voice=False):
     data = extracted.validated_data
     assignee = resolve_assignee(user, data["assignee"], from_voice=from_voice)
     if not assignee:
-        return clarify(f"The assignee was read as '{data['assignee'][:120]}' but could not be uniquely identified. "
-                       "Please resend the complete task with their full name or email.", transcript)
+        suggestions = suggest_assignees(user, data["assignee"]) if from_voice else []
+        hint = f" Possible matches: {', '.join(suggestions)}." if suggestions else ""
+        return clarify(f"The assignee was read as '{data['assignee'][:120]}' but could not be uniquely identified."
+                       f"{hint} Please resend the complete task with their full name or email.", transcript)
     if data["due_date"] and data["due_date"] < timezone.localdate():
         return clarify("The deadline is in the past. Please resend the complete task with a future date, including the year.", transcript)
     project = None
@@ -237,7 +302,10 @@ def build_task_change(user, transcript, intent, *, from_voice=False):
     if parsed["assignee"]:
         assignee = resolve_assignee(user, parsed["assignee"], from_voice=from_voice)
         if not assignee:
-            return clarify("The new assignee could not be uniquely identified. Use their full name or email.", transcript)
+            suggestions = suggest_assignees(user, parsed["assignee"]) if from_voice else []
+            hint = f" Possible matches: {', '.join(suggestions)}." if suggestions else ""
+            return clarify(f"The new assignee was read as '{parsed['assignee'][:120]}' but could not be uniquely "
+                           f"identified.{hint} Use their full name or email.", transcript)
         changes["assignees"] = [assignee.pk]
     if parsed["project"]:
         department = assignee.department if "assignees" in changes else task.department

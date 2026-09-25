@@ -51,7 +51,11 @@ def transcribe(audio):
         f'--{boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\n'
         f'{settings.OPENAI_TRANSCRIPTION_MODEL}\r\n'
         f'--{boundary}\r\nContent-Disposition: form-data; name="prompt"\r\n\r\n'
-        'TaskFlow, vazifa, xodim, mas’ul, muddat, sentyabr, vebsayt, login.\r\n'
+        'TaskFlow vazifasi haqidagi nutq o‘zbek, rus yoki ingliz tilida bo‘lishi mumkin. '
+        'Xodimning ism va familiyasini '
+        'aytilganidek yozing, boshqa tilga tarjima qilmang. Ismga -ga yoki -ni '
+        'qo‘shimchasi qo‘shilgan bo‘lishi mumkin. Atamalar: vazifa, xodim, '
+        'mas’ul, muddat, sentyabr, vebsayt, login.\r\n'
         f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="voice{extension}"\r\n'
         'Content-Type: application/octet-stream\r\n\r\n'
     ).encode() + audio.read(MAX_AUDIO_BYTES + 1) + f"\r\n--{boundary}--\r\n".encode()

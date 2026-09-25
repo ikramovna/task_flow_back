@@ -152,7 +152,10 @@ Russian requests too. Only an active Owner, Admin, or Manager can change tasks
 they created through this AI flow. A task can also be identified by its exact
 title or UUID; ambiguous targets are never changed.
 For voice, transcription is guided with TaskFlow vocabulary and a uniquely
-matched assignee may differ by one letter in either the first name or surname.
+matched assignee may differ by up to two letters in a long name when the other
+name part matches exactly. Cyrillic Uzbek spellings and common `-ga`/`-ni`
+name endings are normalized before matching. If a name remains uncertain, the
+response suggests possible employees but does not assign anyone automatically.
 If uploaded audio still needs clarification, both Tiko and Telegram show the
 words heard and the assignee name interpreted by the AI so the user can resend
 the complete corrected task. "End of September" and equivalent named-month

@@ -144,11 +144,38 @@ class AITaskTests(AITaskFixture, APITestCase):
         self.assertEqual(response.status_code, 201, response.data)
         self.assertEqual(Task.objects.get().main_assignee, self.assignee)
 
+    @patch("apps.ai_tasks.transcribe", return_value="Muslima Zakirjanovaga saytni tuzatish")
+    def test_voice_recovers_two_surname_letters_only_when_unique(self, transcriber):
+        self.parsed["assignee"] = "Muslima Zakirjanova"
+        response = self.client.post("/api/v1/ai/tasks/", {
+            "request_id": str(uuid.uuid4()), "audio": SimpleUploadedFile("voice.ogg", b"audio"),
+        }, format="multipart")
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(Task.objects.get().main_assignee, self.assignee)
+
+    def test_text_matches_cyrillic_spelling_and_uzbek_case_ending(self):
+        for spoken in ("Муслима Зокиржонова", "Muslima Zokirjonovaga"):
+            with self.subTest(spoken=spoken):
+                self.parsed["assignee"] = spoken
+                payload = {"request_id": str(uuid.uuid4()), "text": self.payload["text"]}
+                response = self.post(payload)
+                self.assertEqual(response.status_code, 201, response.data)
+                self.assertEqual(Task.objects.latest("created_at").main_assignee, self.assignee)
+
     @patch("apps.ai_tasks.transcribe", return_value="Muslima Zikirjonovaga saytni tuzatish")
     def test_voice_near_match_rejects_two_possible_assignees(self, transcriber):
         User.objects.create_user(username="similar", email="similar@example.com",
                                  first_name="Muslima", last_name="Zakirjonova", department=self.department)
         self.parsed["assignee"] = "Muslima Zikirjonova"
+        response = self.client.post("/api/v1/ai/tasks/", {
+            "request_id": str(uuid.uuid4()), "audio": SimpleUploadedFile("voice.ogg", b"audio"),
+        }, format="multipart")
+        self.assertEqual(response.data["status"], "needs_clarification")
+        self.assertFalse(Task.objects.exists())
+
+    @patch("apps.ai_tasks.transcribe", return_value="Muslama Zakirjonovaga saytni tuzatish")
+    def test_voice_does_not_guess_when_both_name_parts_are_wrong(self, transcriber):
+        self.parsed["assignee"] = "Muslama Zakirjonova"
         response = self.client.post("/api/v1/ai/tasks/", {
             "request_id": str(uuid.uuid4()), "audio": SimpleUploadedFile("voice.ogg", b"audio"),
         }, format="multipart")
@@ -164,6 +191,7 @@ class AITaskTests(AITaskFixture, APITestCase):
         self.assertEqual(response.data["status"], "needs_clarification")
         self.assertIn("Muslima Zakirova", response.data["message"])
         self.assertIn("I heard: Muslima Zakirovaga saytni tuzatish", response.data["message"])
+        self.assertIn("Possible matches: Muslima Zokirjonova", response.data["message"])
         self.assertFalse(Task.objects.exists())
 
     def test_rejects_unsupported_audio_and_text_with_audio(self):
@@ -477,6 +505,7 @@ class AIProviderTests(SimpleTestCase):
         self.assertEqual(args[0], "audio/transcriptions")
         self.assertIn(b'filename="voice.ogg"', args[1])
         self.assertIn(b'name="prompt"', args[1])
+        self.assertIn("Xodimning ism va familiyasini".encode(), args[1])
         self.assertIn(b"sample audio", args[1])
 
 
