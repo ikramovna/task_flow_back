@@ -156,6 +156,10 @@ matched assignee may differ by up to two letters in a long name when the other
 name part matches exactly. Cyrillic Uzbek spellings and common `-ga`/`-ni`
 name endings are normalized before matching. If a name remains uncertain, the
 response suggests possible employees but does not assign anyone automatically.
+When only a first name is provided, one exact active employee match is enough.
+If several employees share that name, the bot asks which one and lists their
+full names and emails. A surname, full name, or email reply within 10 minutes
+completes the original task without another AI request.
 If uploaded audio still needs clarification, both Tiko and Telegram show the
 words heard and the assignee name interpreted by the AI so the user can resend
 the complete corrected task. "End of September" and equivalent named-month
@@ -224,11 +228,16 @@ with the task title. Only after the user confirms, send a **new** request ID and
 can be used once. Canceling the dialog requires no API call. Refresh the task
 list/detail after `updated` or `deleted`.
 
-An ambiguous/missing employee, invalid or past date, unknown project, or incomplete
-request returns `200` with `status: "needs_clarification"`, `message`, and
-`transcript`, without creating a task. Display the message and ask the user to
-resubmit the **complete corrected request with a new UUID**. Follow-ups are
-stateless: sending only a name or date will not complete a previous request.
+If multiple employees match the supplied name, the response is `200` with
+`status: "needs_clarification"`, `clarification_type: "assignee"`, `message`,
+`candidates` (ID, full name, email), and `transcript`; no task is created yet.
+Keep the Tiko input open and let the user reply with the surname, full name, or
+email using a **new** request UUID. The backend keeps the pending task for 10
+minutes within the same channel and returns `201` with `status: "created"` after
+an unambiguous reply. The frontend may render `candidates` as selectable options
+that submit the chosen email as text. Other clarification types (missing employee,
+invalid or past date, unknown project, incomplete request) still require the
+complete corrected request with a new UUID.
 Names match case-insensitively, ignoring apostrophe variants; uncertain spelling
 is never auto-assigned. Use the employee's email to disambiguate duplicate names.
 Dates without a year use their next occurrence in Asia/Tashkent. No deadline is

@@ -202,23 +202,56 @@ def available_assignees(user):
     return candidates
 
 
+def exact_assignee_matches(user, name, *, candidates=None):
+    candidates = list(candidates if candidates is not None else available_assignees(user))
+    spellings = name_spellings(name)
+    matchers = (
+        lambda person: {normalize_person(person.email)},
+        lambda person: {normalize_person(person.get_full_name()),
+                        normalize_person(f"{person.last_name} {person.first_name}")},
+        lambda person: {normalize_person(person.first_name)},
+        lambda person: {normalize_person(person.last_name)},
+        lambda person: {normalize_person(person.username)},
+    )
+    for keys in matchers:
+        matches = [candidate for candidate in candidates if spellings & keys(candidate)]
+        if matches:
+            return matches
+    return []
+
+
 def resolve_assignee(user, name, *, from_voice=False):
-    candidates = list(available_assignees(user))
     if name == "self":
         return user if user.department_id else None
-    spellings = name_spellings(name)
-    matches = [candidate for candidate in candidates if spellings & {
-        normalize_person(candidate.email), normalize_person(candidate.get_full_name()),
-        normalize_person(f"{candidate.last_name} {candidate.first_name}"),
-        normalize_person(candidate.first_name), normalize_person(candidate.last_name),
-        normalize_person(candidate.username),
-    }]
+    candidates = list(available_assignees(user))
+    matches = exact_assignee_matches(user, name, candidates=candidates)
     if len(matches) == 1:
         return matches[0]
     if matches or not from_voice:
         return None
     near_matches = nearby_assignees(candidates, name)
     return next(iter(near_matches.values())) if len(near_matches) == 1 else None
+
+
+def ask_which_assignee(data, matches, transcript):
+    if len(matches) > 20:
+        return clarify("Several employees have that name. Please resend the complete task with a full name or email.", transcript)
+    options = sorted(matches, key=lambda person: (person.get_full_name(), person.email))
+    label = data["assignee"][:120]
+    choices = [{"id": str(person.pk), "name": person.get_full_name(), "email": person.email}
+               for person in options]
+    names = "\n".join(f"• {choice['name']} ({choice['email']})" for choice in choices)
+    return {
+        "status": "needs_clarification", "clarification_type": "assignee",
+        "message": f"Which {label}? Reply with the surname, full name, or email:\n{names}",
+        "transcript": transcript, "candidates": choices,
+        "pending_task": {
+            "title": data["title"], "description": data["description"],
+            "assignee": data["assignee"], "project": data["project"],
+            "due_date": data["due_date"].isoformat() if data["due_date"] else None,
+            "priority": data["priority"],
+        },
+    }
 
 
 def build_task(user, transcript, *, from_voice=False):
@@ -229,14 +262,21 @@ def build_task(user, transcript, *, from_voice=False):
     if not extracted.is_valid():
         return clarify("Please resend the complete request with a clear task, assignee and deadline.", transcript)
     data = extracted.validated_data
+    if data["due_date"] and data["due_date"] < timezone.localdate():
+        return clarify("The deadline is in the past. Please resend the complete task with a future date, including the year.", transcript)
     assignee = resolve_assignee(user, data["assignee"], from_voice=from_voice)
     if not assignee:
+        exact = exact_assignee_matches(user, data["assignee"])
+        if len(exact) > 1:
+            return ask_which_assignee(data, exact, transcript)
         suggestions = suggest_assignees(user, data["assignee"]) if from_voice else []
         hint = f" Possible matches: {', '.join(suggestions)}." if suggestions else ""
         return clarify(f"The assignee was read as '{data['assignee'][:120]}' but could not be uniquely identified."
                        f"{hint} Please resend the complete task with their full name or email.", transcript)
-    if data["due_date"] and data["due_date"] < timezone.localdate():
-        return clarify("The deadline is in the past. Please resend the complete task with a future date, including the year.", transcript)
+    return finish_task(user, data, assignee, transcript)
+
+
+def finish_task(user, data, assignee, transcript):
     project = None
     if data["project"]:
         projects = Project.objects.filter(department=assignee.department).exclude(status=Project.Status.ARCHIVED)
@@ -264,6 +304,46 @@ def build_task(user, transcript, *, from_voice=False):
             "priority": task.priority, "status": task.status,
         },
     }
+
+
+def pending_assignee_request(user, request_key):
+    channel = "telegram:" if request_key.startswith("telegram:") else "web:"
+    latest = AITaskRequest.objects.select_for_update().filter(
+        user=user, request_key__startswith=channel,
+        created_at__gte=timezone.now() - timedelta(minutes=10),
+    ).order_by("-created_at").first()
+    return latest if latest and latest.result.get("clarification_type") == "assignee" else None
+
+
+def continue_assignee_request(user, pending, reply):
+    """A short name/email reply completes the stored request without a second AI call."""
+    if not pending or len(reply.split()) > 4 or re.match(
+        r"^(?:create (?:a )?task|task yarat\w*|vazifa yarat\w*)\b", normalize(reply)
+    ):
+        return None
+    candidate_ids = {choice["id"] for choice in pending.result["candidates"]}
+    candidates = list(available_assignees(user).filter(pk__in=candidate_ids))
+    answer = normalize_person(reply)
+    matches = [person for person in candidates if answer in {
+        normalize_person(person.last_name), normalize_person(person.get_full_name()),
+        normalize_person(f"{person.last_name} {person.first_name}"), normalize_person(person.email),
+    }]
+    if len(matches) != 1:
+        result = dict(pending.result)
+        result["message"] = (
+            "That answer did not identify one employee. " if not matches else
+            "That name still matches several employees. "
+        ) + pending.result["message"]
+        return result
+    extracted = ExtractedTaskSerializer(data=pending.result["pending_task"])
+    extracted.is_valid(raise_exception=True)
+    data = extracted.validated_data
+    if data["due_date"] and data["due_date"] < timezone.localdate():
+        return clarify("The deadline is now in the past. Please send a complete corrected task request.", reply)
+    result = finish_task(user, data, matches[0], pending.result["transcript"])
+    pending.result = result
+    pending.save(update_fields=["result", "updated_at"])
+    return result
 
 
 def ensure_ai_task_manager(user, task):
@@ -397,7 +477,10 @@ def create_ai_task(*, user, request_key, text="", audio=None, audio_loader=None,
         elif intent == "ambiguous":
             result = clarify("Please request either an edit or a deletion, one at a time.", transcript)
         elif intent == "create":
-            result = build_task(user, transcript, from_voice=audio is not None)
+            pending = pending_assignee_request(user, request_key)
+            result = continue_assignee_request(user, pending, transcript)
+            if result is None:
+                result = build_task(user, transcript, from_voice=audio is not None)
         else:
             result = build_task_change(user, transcript, intent, from_voice=audio is not None)
         if audio is not None and result["status"] in {"needs_clarification", "needs_confirmation"}:

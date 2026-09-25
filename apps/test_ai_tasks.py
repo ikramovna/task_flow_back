@@ -72,6 +72,60 @@ class AITaskTests(AITaskFixture, APITestCase):
         self.assertEqual(response.data["status"], "needs_clarification")
         self.assertFalse(Task.objects.exists())
 
+    def test_first_name_creates_task_when_only_one_employee_matches(self):
+        User.objects.create_user(username="surname-match", email="surname@example.com",
+                                 first_name="Ali", last_name="Muslima", department=self.department)
+        self.parsed["assignee"] = "Muslima"
+        response = self.post()
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(Task.objects.get().main_assignee, self.assignee)
+
+    def test_duplicate_first_name_asks_which_employee_then_accepts_surname(self):
+        other = User.objects.create_user(username="second", email="second@example.com",
+                                         first_name="Muslima", last_name="Karimova", department=self.department)
+        self.parsed["assignee"] = "Muslima"
+        first = self.post()
+        self.assertEqual(first.data["status"], "needs_clarification")
+        self.assertEqual(first.data["clarification_type"], "assignee")
+        self.assertIn("Which Muslima?", first.data["message"])
+        self.assertIn("Muslima Zokirjonova", first.data["message"])
+        self.assertIn("Muslima Karimova", first.data["message"])
+        self.assertFalse(Task.objects.exists())
+
+        still_ambiguous = self.post({"request_id": str(uuid.uuid4()), "text": "Muslima"})
+        self.assertEqual(still_ambiguous.data["clarification_type"], "assignee")
+        self.assertFalse(Task.objects.exists())
+
+        request_id = str(uuid.uuid4())
+        answer = {"request_id": request_id, "text": "Karimova"}
+        created = self.post(answer)
+        self.assertEqual(created.status_code, 201, created.data)
+        task = Task.objects.get()
+        self.assertEqual(task.main_assignee, other)
+        self.assertEqual(task.title, self.parsed["title"])
+        self.assertEqual(Notification.objects.filter(task=task).count(), 1)
+        self.assertEqual(self.post(answer).data, created.data)
+        self.extractor.assert_called_once()
+
+    def test_duplicate_full_names_can_be_selected_by_email(self):
+        other = User.objects.create_user(username="second", email="second@example.com",
+                                         first_name="Muslima", last_name="Zokirjonova", department=self.department)
+        self.parsed["assignee"] = "Muslima"
+        self.assertEqual(self.post().data["clarification_type"], "assignee")
+        created = self.post({"request_id": str(uuid.uuid4()), "text": other.email})
+        self.assertEqual(created.status_code, 201, created.data)
+        self.assertEqual(Task.objects.get().main_assignee, other)
+
+    def test_expired_name_question_does_not_use_old_task_details(self):
+        User.objects.create_user(username="second", email="second@example.com",
+                                 first_name="Muslima", last_name="Karimova", department=self.department)
+        self.parsed["assignee"] = "Muslima"
+        self.assertEqual(self.post().data["clarification_type"], "assignee")
+        AITaskRequest.objects.update(created_at=timezone.now() - timedelta(minutes=11))
+        response = self.post({"request_id": str(uuid.uuid4()), "text": "Karimova"})
+        self.assertEqual(response.data["status"], "needs_clarification")
+        self.assertFalse(Task.objects.exists())
+
     def test_unknown_person_and_project_and_past_date_create_nothing(self):
         for field, value in [("assignee", "Unknown Person"), ("project", "Unknown project"), ("due_date", "2000-05-23")]:
             with self.subTest(field=field):
@@ -303,6 +357,20 @@ class TelegramAITaskTests(AITaskFixture, APITestCase):
 
     def webhook(self, secret="secret"):
         return self.client.post("/api/v1/telegram/webhook/", {"message": self.message}, format="json", HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN=secret)
+
+    def test_bot_asks_which_first_name_and_accepts_surname_reply(self):
+        other = User.objects.create_user(username="second", email="second@example.com",
+                                         first_name="Muslima", last_name="Karimova", department=self.department)
+        self.parsed["assignee"] = "Muslima"
+        self.webhook()
+        self.assertIn("Which Muslima?", self.bot.call_args.kwargs["text"])
+        self.assertFalse(Task.objects.exists())
+        self.message["message_id"] = 2
+        self.message["text"] = "Karimova"
+        self.webhook()
+        self.assertIn("TASK CREATED", self.bot.call_args.kwargs["text"])
+        self.assertEqual(Task.objects.get().main_assignee, other)
+        self.extractor.assert_called_once()
 
     def test_telegram_text_and_replayed_update_create_one_task(self):
         self.assertEqual(self.webhook().status_code, 200)
