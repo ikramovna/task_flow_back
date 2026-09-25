@@ -1,7 +1,10 @@
 """Shared text/voice task workflow for Tiko and Telegram."""
 import hashlib
 import re
+import secrets
 import unicodedata
+import uuid
+from datetime import timedelta
 from types import SimpleNamespace
 
 from django.db import transaction
@@ -12,8 +15,9 @@ from drf_spectacular.utils import extend_schema_field
 from rest_framework import serializers
 from rest_framework.exceptions import PermissionDenied
 
-from .ai_provider import extract_task, transcribe, validate_audio
-from .models import AITaskRequest, Project, User
+from .ai_provider import extract_task, extract_task_change, transcribe, validate_audio
+from .models import AITaskRequest, Project, Task, User
+from .notifications import notify_task_assigned, notify_task_completed
 from .serializers import TaskSerializer
 from .task_creation import save_task
 from .task_visibility import PRIVILEGED_TASK_ROLES
@@ -55,6 +59,55 @@ def normalize(value):
 
 def clarify(message, transcript):
     return {"status": "needs_clarification", "message": message, "transcript": transcript}
+
+
+DELETE_WORDS = re.compile(r"\b(?:ochir\w*|delete\w*|remove\w*|удал\w*)\b")
+UPDATE_WORDS = re.compile(
+    r"\b(?:edit\w*|update\w*|modify\w*|change\w*|tahrir\w*|ozgartir\w*|"
+    r"togrila\w*|tugrila\w*|togla\w*|tuzat\w*|almashtir\w*|редактир\w*|измен\w*|исправ\w*)\b"
+)
+TASK_REFERENCE = re.compile(
+    r"\b(?:task\w*|vazifa\w*|задач\w*|last|latest|oldingi|oxirgi|hozirgi|"
+    r"yaratgan\w*|created|shu|uni|buni|it|this|that)\b"
+)
+DELETE_CONFIRMATION = re.compile(r"^confirm delete ([0-9a-f]{12})$", re.IGNORECASE)
+
+
+def task_intent(text):
+    normalized = normalize(text)
+    if DELETE_CONFIRMATION.fullmatch(normalized):
+        return "confirm_delete"
+    if re.match(r"^(?:create (?:a )?task|task yarat\w*|vazifa yarat\w*|созда\w* задач\w*)\b", normalized):
+        return "create"
+    has_target = bool(TASK_REFERENCE.search(normalized))
+    delete = has_target and bool(DELETE_WORDS.search(normalized))
+    update = has_target and bool(UPDATE_WORDS.search(normalized))
+    if delete and update:
+        return "ambiguous"
+    return "delete" if delete else "update" if update else "create"
+
+
+def latest_ai_task(user):
+    receipt = AITaskRequest.objects.filter(user=user, result__status="created").order_by("-created_at").first()
+    task_id = (receipt.result.get("task") or {}).get("id") if receipt else None
+    return Task.objects.filter(pk=task_id, created_by=user, is_archived=False).first() if task_id else None
+
+
+def resolve_task_target(user, target):
+    target = (target or "").strip()
+    if normalize(target) in {"last", "latest", "recent", "current"}:
+        return latest_ai_task(user)
+    if target:
+        try:
+            task_id = uuid.UUID(target)
+        except ValueError:
+            matches = [task for task in Task.objects.filter(created_by=user, is_archived=False)
+                       if normalize(task.title) == normalize(target)]
+            return matches[0] if len(matches) == 1 else None
+        return Task.objects.filter(pk=task_id, created_by=user, is_archived=False).first()
+    recent = Task.objects.filter(created_by=user, is_archived=False,
+                                 created_at__gte=timezone.now() - timedelta(minutes=30))
+    return recent.first() if recent.count() == 1 else None
 
 
 def one_edit_apart(left, right):
@@ -148,6 +201,101 @@ def build_task(user, transcript, *, from_voice=False):
     }
 
 
+def ensure_ai_task_manager(user, task):
+    if not user.is_active or user.role not in PRIVILEGED_TASK_ROLES or task.created_by_id != user.pk:
+        raise PermissionDenied("You can manage only your own tasks as an Owner, Admin, or Manager.")
+
+
+def build_task_change(user, transcript, intent, *, from_voice=False):
+    parsed = extract_task_change(transcript)
+    if parsed["action"] != intent or parsed["clarification"]:
+        return clarify(parsed["clarification"] or "Please make one clear edit or delete request.", transcript)
+    task = resolve_task_target(user, parsed["target"])
+    if not task:
+        return clarify("I could not identify one task. Say 'my last created task' or give the exact task title.", transcript)
+    task = Task.objects.select_for_update().filter(pk=task.pk, is_archived=False).first()
+    if not task:
+        return clarify("That task is no longer available.", transcript)
+    ensure_ai_task_manager(user, task)
+    if intent == "delete":
+        code = secrets.token_hex(6).upper()
+        return {
+            "status": "needs_confirmation", "action": "delete", "confirmation_code": code,
+            "transcript": transcript, "task": {"id": str(task.pk), "title": task.title},
+            "message": f"Delete '{task.title}'? Send CONFIRM DELETE {code} within 10 minutes to permanently delete it.",
+        }
+
+    changes = {key: parsed[key] for key in ("title", "description", "due_date", "priority", "status")
+               if parsed[key] is not None}
+    if "due_date" in changes:
+        try:
+            due_date = serializers.DateField().run_validation(changes["due_date"])
+        except serializers.ValidationError:
+            return clarify("Give the new deadline as an exact day, month, and year.", transcript)
+        if due_date < timezone.localdate():
+            return clarify("The new deadline is in the past. Give a future date.", transcript)
+    if parsed["assignee"]:
+        assignee = resolve_assignee(user, parsed["assignee"], from_voice=from_voice)
+        if not assignee:
+            return clarify("The new assignee could not be uniquely identified. Use their full name or email.", transcript)
+        changes["assignees"] = [assignee.pk]
+    if parsed["project"]:
+        department = assignee.department if "assignees" in changes else task.department
+        projects = Project.objects.filter(department=department).exclude(status=Project.Status.ARCHIVED)
+        matches = [project for project in projects if normalize(project.name) == normalize(parsed["project"])]
+        if len(matches) != 1:
+            return clarify("The new project could not be uniquely identified. Use its exact name.", transcript)
+        changes["project"] = matches[0].pk
+    if not changes:
+        return clarify("Say what to change in that task, such as its title, deadline, or priority.", transcript)
+    if "status" in changes and changes["status"] != task.status and task.main_assignee_id != user.pk:
+        raise PermissionDenied("Only the main assignee can change task status.")
+    previous_status = task.status
+    previous_assignees = set(task.assignees.values_list("pk", flat=True))
+    serializer = TaskSerializer(task, data=changes, partial=True, context={"request": SimpleNamespace(user=user)})
+    serializer.is_valid(raise_exception=True)
+    task = serializer.save()
+    if "assignees" in changes:
+        notify_task_assigned(task, user, task.assignees.exclude(pk__in=previous_assignees))
+    if task.status == Task.Status.COMPLETED and previous_status != Task.Status.COMPLETED:
+        task.progress, task.completed_at = 100, timezone.now()
+        task.save(update_fields=["progress", "completed_at", "updated_at"])
+        notify_task_completed(task, user)
+    elif task.status != Task.Status.COMPLETED and previous_status == Task.Status.COMPLETED:
+        task.completed_at = None
+        task.save(update_fields=["completed_at", "updated_at"])
+    return {
+        "status": "updated", "action": "update", "transcript": transcript,
+        "message": f"Task updated: {task.title}",
+        "task": {"id": str(task.pk), "title": task.title, "description": task.description,
+                 "due_date": task.due_date.isoformat() if task.due_date else None,
+                 "priority": task.priority, "status": task.status,
+                 "assignee_name": task.main_assignee.get_full_name() if task.main_assignee else ""},
+    }
+
+
+@transaction.atomic
+def confirm_ai_delete(user, code):
+    pending = AITaskRequest.objects.select_for_update().filter(
+        user=user, result__status="needs_confirmation", result__confirmation_code=code.upper(),
+        created_at__gte=timezone.now() - timedelta(minutes=10),
+    ).order_by("-created_at").first()
+    if not pending:
+        return clarify("That delete confirmation expired or was already used. Send a new delete request.", "")
+    task_id = (pending.result.get("task") or {}).get("id")
+    task = Task.objects.select_for_update().filter(pk=task_id, created_by=user, is_archived=False).first()
+    if not task:
+        return clarify("That task is no longer available.", "")
+    ensure_ai_task_manager(user, task)
+    title = task.title
+    task.delete()
+    result = {"status": "deleted", "action": "delete", "message": f"Task deleted: {title}",
+              "task": {"id": str(task_id), "title": title}}
+    pending.result = result
+    pending.save(update_fields=["result", "updated_at"])
+    return result
+
+
 def create_ai_task(*, user, request_key, text="", audio=None, audio_loader=None, source_identity=""):
     if not user.is_active:
         raise PermissionDenied("Only active users can create tasks.")
@@ -174,8 +322,17 @@ def create_ai_task(*, user, request_key, text="", audio=None, audio_loader=None,
         transcript = transcribe(audio) if audio is not None else text.strip()
         if not transcript or len(transcript) > 6000:
             raise serializers.ValidationError("The text must contain between 1 and 6000 characters.")
-        result = build_task(user, transcript, from_voice=audio is not None)
-        if audio is not None and result["status"] == "needs_clarification":
+        intent = task_intent(transcript)
+        if intent == "confirm_delete":
+            code = DELETE_CONFIRMATION.fullmatch(normalize(transcript)).group(1)
+            result = confirm_ai_delete(user, code)
+        elif intent == "ambiguous":
+            result = clarify("Please request either an edit or a deletion, one at a time.", transcript)
+        elif intent == "create":
+            result = build_task(user, transcript, from_voice=audio is not None)
+        else:
+            result = build_task_change(user, transcript, intent, from_voice=audio is not None)
+        if audio is not None and result["status"] in {"needs_clarification", "needs_confirmation"}:
             result["message"] += f"\n\nI heard: {transcript[:600]}"
         AITaskRequest.objects.create(user=user, request_key=request_key, fingerprint=fingerprint, result=result)
         return result

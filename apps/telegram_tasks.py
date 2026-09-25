@@ -12,7 +12,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.exceptions import APIException, ValidationError
 
 from .ai_provider import MAX_AUDIO_BYTES
-from .ai_tasks import create_ai_task
+from .ai_tasks import confirm_ai_delete, create_ai_task
 from .models import TelegramIntegration
 from .telegram import TelegramError, bot_api, task_url
 
@@ -80,6 +80,8 @@ HELP = (
     "<b>Describe → Match → Create</b>\n"
     "AI extracts the task details. TaskFlow checks the assignee and your permissions, then saves the task.\n\n"
     "<b>If details are unclear</b>\nResend the complete corrected request, not just the missing name or date.\n\n"
+    "<b>Edit or delete</b>\nSay ‘Edit my last created task: set priority to high’ or "
+    "‘Delete my last created task’. Deletion needs a second confirmation.\n\n"
     "<b>Defaults</b>\nDepartment: assignee’s department\nStatus: Not Started\n"
     "Priority: Medium if omitted\nEffort score: 1\nHidden: No\nCategory: empty\n\n"
     "<i>Use /menu whenever you want to return here.</i>"
@@ -129,15 +131,27 @@ def handle_task_callback(callback):
     sender = callback.get("from") or {}
     if not callback.get("id"):
         return None
-    connected = (chat.get("type") == "private" and sender.get("id") and
-                 TelegramIntegration.objects.filter(
-                     telegram_user_id=sender["id"], telegram_chat_id=chat.get("id"),
-                     is_connected=True, user__is_active=True,
-                 ).exists())
-    if not connected:
+    integration = None
+    if chat.get("type") == "private" and sender.get("id"):
+        integration = TelegramIntegration.objects.select_related("user").filter(
+            telegram_user_id=sender["id"], telegram_chat_id=chat.get("id"),
+            is_connected=True, user__is_active=True,
+        ).first()
+    if not integration:
         return {"method": "answerCallbackQuery", "callback_query_id": callback["id"],
                 "text": "Connect Telegram from your TaskFlow profile first.", "show_alert": True}
     screen = str(callback.get("data", "")).removeprefix("task:")
+    if re.fullmatch(r"delete:[0-9A-Fa-f]{12}", screen):
+        try:
+            bot_api("answerCallbackQuery", callback_query_id=callback["id"], timeout=3)
+        except TelegramError:
+            logger.warning("Could not acknowledge Telegram delete callback")
+        try:
+            result = confirm_ai_delete(integration.user, screen.split(":", 1)[1])
+            message_text = result["message"]
+        except APIException as exc:
+            message_text = str(exc.detail)
+        return {"method": "sendMessage", "chat_id": chat["id"], "text": message_text}
     if screen not in {"menu", "create", "voice", "template", "example", "help"}:
         return {"method": "answerCallbackQuery", "callback_query_id": callback["id"]}
     # Clear Telegram's loading indicator quickly. Telegram sends the selected
@@ -225,6 +239,20 @@ def handle_task_message(message):
                 [{"text": "Open task", "url": task_url(result["task"]["id"])}],
                 [{"text": "Create another task", "callback_data": "task:create"}],
             ]})
+        elif result["status"] == "updated":
+            task = result["task"]
+            reply = "✅ <b>TASK UPDATED</b>\n\n" + escape(task["title"])
+            markup = json.dumps({"inline_keyboard": [[
+                {"text": "Open task", "url": task_url(task["id"])}
+            ]]})
+        elif result["status"] == "needs_confirmation":
+            reply = "⚠️ <b>CONFIRM DELETION</b>\n\n" + escape(result["message"])
+            markup = json.dumps({"inline_keyboard": [[
+                {"text": "Delete this task", "callback_data": f"task:delete:{result['confirmation_code']}"}
+            ]]})
+        elif result["status"] == "deleted":
+            reply = "🗑 <b>TASK DELETED</b>\n\n" + escape(result["task"]["title"])
+            markup = MENU
     except APIException as exc:
         # A failed analysis rolls back the receipt so a fresh message can retry.
         reply = "<b>Unable to create task</b>\n\n" + escape(str(exc.detail)[:1500])

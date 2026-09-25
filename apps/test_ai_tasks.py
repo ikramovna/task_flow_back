@@ -11,7 +11,7 @@ from django.utils import timezone
 from rest_framework.test import APITestCase, APITransactionTestCase
 
 from .ai_provider import AIUnavailable, extract_task, transcribe
-from .ai_tasks import create_ai_task
+from .ai_tasks import create_ai_task, task_intent
 from .models import AITaskRequest, Department, Notification, Task, TelegramIntegration, User
 from .telegram import TelegramError, task_url
 
@@ -33,6 +33,17 @@ class AITaskFixture:
 
     def post(self, payload=None):
         return self.client.post("/api/v1/ai/tasks/", payload or self.payload, format="json")
+
+
+class TaskIntentTests(SimpleTestCase):
+    def test_uzbek_voice_edit_is_routed_to_update(self):
+        self.assertEqual(task_intent("Shu vazifani to'g'lab qo'y"), "update")
+        self.assertEqual(task_intent("Hozir yaratgan taskni o'chir"), "delete")
+
+    def test_new_task_to_fix_or_remove_something_stays_creation(self):
+        self.assertEqual(task_intent("Fix website login page"), "create")
+        self.assertEqual(task_intent("Remove old icons from website"), "create")
+        self.assertEqual(task_intent("Create a task: update task list dashboard"), "create")
 
 
 class AITaskTests(AITaskFixture, APITestCase):
@@ -162,6 +173,96 @@ class AITaskTests(AITaskFixture, APITestCase):
                 data["text"] = text
             self.assertEqual(self.client.post("/api/v1/ai/tasks/", data, format="multipart").status_code, 400)
         self.extractor.assert_not_called()
+
+
+class AITaskChangeTests(AITaskFixture, APITestCase):
+    def setUp(self):
+        super().setUp()
+        self.changer = patch("apps.ai_tasks.extract_task_change").start()
+        self.changer.return_value = {
+            "action": "update", "target": "last", "title": None, "description": None,
+            "assignee": None, "project": None, "due_date": None, "priority": None,
+            "status": None, "clarification": None,
+        }
+        self.assertEqual(self.post().status_code, 201)
+
+    def change(self, text, request_id=None):
+        return self.post({"request_id": request_id or str(uuid.uuid4()), "text": text})
+
+    def test_edits_last_created_task_without_creating_another(self):
+        task = Task.objects.get()
+        self.changer.return_value.update(title="Fix the login page", priority="high")
+        response = self.change("Edit my last created task: rename it and set high priority")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(response.data["status"], "updated")
+        self.assertEqual(response.data["task"]["id"], str(task.pk))
+        task.refresh_from_db()
+        self.assertEqual(task.title, "Fix the login page")
+        self.assertEqual(task.priority, "high")
+        self.assertEqual(Task.objects.count(), 1)
+
+    @patch("apps.ai_tasks.transcribe", return_value="Oxirgi yaratgan taskni edit qil, priority high")
+    def test_uploaded_voice_can_edit_last_created_task(self, transcriber):
+        self.changer.return_value["priority"] = "high"
+        response = self.client.post("/api/v1/ai/tasks/", {
+            "request_id": str(uuid.uuid4()), "audio": SimpleUploadedFile("voice.ogg", b"audio"),
+        }, format="multipart")
+        self.assertEqual(response.data["status"], "updated")
+        self.assertEqual(Task.objects.get().priority, "high")
+
+    def test_delete_requires_confirmation_and_is_idempotent(self):
+        task_id = Task.objects.get().pk
+        self.changer.return_value.update(action="delete")
+        first = self.change("Delete my last created task")
+        self.assertEqual(first.data["status"], "needs_confirmation")
+        self.assertTrue(Task.objects.filter(pk=task_id).exists())
+        code = first.data["confirmation_code"]
+        request_id = str(uuid.uuid4())
+        confirmed = self.change(f"CONFIRM DELETE {code}", request_id)
+        self.assertEqual(confirmed.data["status"], "deleted")
+        self.assertFalse(Task.objects.filter(pk=task_id).exists())
+        self.assertEqual(self.change(f"CONFIRM DELETE {code}", request_id).data, confirmed.data)
+
+    def test_delete_confirmation_expires_without_deleting(self):
+        self.changer.return_value.update(action="delete")
+        pending = self.change("Delete my last created task")
+        code = pending.data["confirmation_code"]
+        receipt = AITaskRequest.objects.filter(result__status="needs_confirmation").get()
+        AITaskRequest.objects.filter(pk=receipt.pk).update(created_at=timezone.now() - timedelta(minutes=11))
+        response = self.change(f"CONFIRM DELETE {code}")
+        self.assertEqual(response.data["status"], "needs_clarification")
+        self.assertTrue(Task.objects.exists())
+
+    def test_update_never_selects_another_users_task(self):
+        other = User.objects.create_user(username="other", email="other@example.com", role="manager",
+                                         department=self.department)
+        task = Task.objects.get()
+        self.changer.return_value.update(target=str(task.pk), priority="high")
+        self.client.force_authenticate(other)
+        response = self.change("Edit task: set priority high")
+        self.assertEqual(response.data["status"], "needs_clarification")
+        task.refresh_from_db()
+        self.assertEqual(task.priority, "medium")
+
+    def test_last_task_does_not_fall_back_to_older_task_after_delete(self):
+        older_task_id = Task.objects.get().pk
+        self.payload["request_id"] = str(uuid.uuid4())
+        self.assertEqual(self.post().status_code, 201)
+        newer_task_id = Task.objects.exclude(pk=older_task_id).get().pk
+        Task.objects.filter(pk=newer_task_id).delete()
+        self.changer.return_value["priority"] = "high"
+        response = self.change("Edit my last created task: priority high")
+        self.assertEqual(response.data["status"], "needs_clarification")
+        self.assertEqual(Task.objects.get(pk=older_task_id).priority, "medium")
+
+    def test_member_cannot_edit_or_delete_via_ai(self):
+        self.user.role = "member"
+        self.user.save(update_fields=["role"])
+        self.changer.return_value["priority"] = "high"
+        self.assertEqual(self.change("Edit my last created task: high priority").status_code, 403)
+        self.changer.return_value.update(action="delete")
+        self.assertEqual(self.change("Delete my last created task").status_code, 403)
+        self.assertTrue(Task.objects.exists())
 
 
 @override_settings(TELEGRAM_WEBHOOK_SECRET="secret")
@@ -325,6 +426,29 @@ class TelegramAITaskTests(AITaskFixture, APITestCase):
         self.assertEqual(Task.objects.count(), 1)
         download.assert_called_once()
         transcriber.assert_called_once()
+
+    @patch("apps.ai_tasks.extract_task_change")
+    def test_telegram_delete_button_confirms_only_own_last_task(self, change_extractor):
+        self.webhook()
+        task_id = Task.objects.get().pk
+        change_extractor.return_value = {
+            "action": "delete", "target": "last", "title": None, "description": None,
+            "assignee": None, "project": None, "due_date": None, "priority": None,
+            "status": None, "clarification": None,
+        }
+        self.message["message_id"] = 2
+        self.message["text"] = "Delete my last created task"
+        self.webhook()
+        markup = json.loads(self.bot.call_args.kwargs["reply_markup"])
+        callback_data = markup["inline_keyboard"][0][0]["callback_data"]
+        self.assertTrue(Task.objects.filter(pk=task_id).exists())
+        callback = {"id": "delete-cb", "from": {"id": 101}, "message": self.message, "data": callback_data}
+        response = self.client.post("/api/v1/telegram/webhook/", {"callback_query": callback},
+                                    format="json", HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="secret")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["method"], "sendMessage")
+        self.assertIn("Task deleted", response.data["text"])
+        self.assertFalse(Task.objects.filter(pk=task_id).exists())
 
     @patch("apps.telegram_tasks.download_voice")
     @patch("apps.ai_tasks.transcribe", return_value="Muslima uchun vazifa")

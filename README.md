@@ -121,7 +121,7 @@ After deploying to a public HTTPS address, a superuser can register the webhook 
 
 Use `PATCH /api/v1/me/telegram/` with `{"notifications_enabled": false}` to mute Telegram, or `DELETE /api/v1/me/telegram/` to disconnect. New assignments, deadline reminders, and overdue notifications are sent through the existing notification service.
 
-## AI task creation (Tiko and Telegram)
+## AI task creation and changes (Tiko and Telegram)
 
 Both channels use the same service, task permissions, assignee validation, and
 assignment notifications. Configure `OPENAI_API_KEY`, `OPENAI_TASK_MODEL`
@@ -145,6 +145,12 @@ The bot creates a task, assigns the uniquely matched active employee, and replie
 with its title, assignee, deadline, and link. Voice messages are limited to 5
 minutes and 20 MB. Unlinked users and group chats cannot create tasks. A repeated
 delivery of the same Telegram message reuses its stored result.
+To change a task, send text or voice such as **“Edit my last created task: set
+priority to high”**. To delete it, send **“Delete my last created task”** and
+press the confirmation button within 10 minutes. The bot accepts Uzbek and
+Russian requests too. Only an active Owner, Admin, or Manager can change tasks
+they created through this AI flow. A task can also be identified by its exact
+title or UUID; ambiguous targets are never changed.
 For voice, transcription is guided with TaskFlow vocabulary and a uniquely
 matched assignee may differ by one letter in either the first name or surname.
 If uploaded audio still needs clarification, both Tiko and Telegram show the
@@ -202,6 +208,18 @@ Generate a UUID per submission and reuse it on network retries. The response is
 `201` with `status: "created"`, `message`, `transcript`, and `task` (including its
 ID, main assignee, department, optional project and ISO deadline). Replaying the
 same request returns the same result; changing content with the same ID is `400`.
+
+The same endpoint accepts edit and delete instructions as text or audio. For
+example, submit `{"request_id": "<new UUID>", "text": "Edit my last created task:
+set priority to high"}`. An edit returns HTTP `200` with `status: "updated"`,
+`message`, `transcript`, and the updated `task`. A delete request returns HTTP
+`200` with `status: "needs_confirmation"`, `confirmation_code`, `message`, and
+the targeted `task` ID/title; the task still exists. Show a confirmation dialog
+with the task title. Only after the user confirms, send a **new** request ID and
+`text: "CONFIRM DELETE <confirmation_code>"`. A successful confirmation returns
+`status: "deleted"` and the task ID/title. Codes expire after 10 minutes and
+can be used once. Canceling the dialog requires no API call. Refresh the task
+list/detail after `updated` or `deleted`.
 
 An ambiguous/missing employee, invalid or past date, unknown project, or incomplete
 request returns `200` with `status: "needs_clarification"`, `message`, and
