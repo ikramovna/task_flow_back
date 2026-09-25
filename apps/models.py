@@ -329,6 +329,16 @@ class TelegramIntegration(TimeStampedModel):
         return f"Telegram: {self.user.email}"
 
 
+class AITaskRequest(TimeStampedModel):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    request_key = models.CharField(max_length=100)
+    fingerprint = models.CharField(max_length=64)
+    result = models.JSONField(default=dict)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=("user", "request_key"), name="unique_ai_task_request")]
+
+
 class Report(TimeStampedModel):
     class Type(models.TextChoices):
         WEEKLY_PROGRESS = "weekly_progress", "Weekly Progress"

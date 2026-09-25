@@ -120,3 +120,78 @@ After deploying to a public HTTPS address, a superuser can register the webhook 
 3. `GET /api/v1/me/telegram/` confirms the connection.
 
 Use `PATCH /api/v1/me/telegram/` with `{"notifications_enabled": false}` to mute Telegram, or `DELETE /api/v1/me/telegram/` to disconnect. New assignments, deadline reminders, and overdue notifications are sent through the existing notification service.
+
+## AI task creation (Tiko and Telegram)
+
+Both channels use the same service, task permissions, assignee validation, and
+assignment notifications. Configure `OPENAI_API_KEY`, `OPENAI_TASK_MODEL`
+(default `gpt-5.4-mini`) and `OPENAI_TRANSCRIPTION_MODEL`
+(default `gpt-4o-mini-transcribe`) in the backend environment, then run
+`python manage.py migrate`. Text and voice contents are sent to OpenAI for
+extraction/transcription; API keys stay on the server. The implementation follows
+the official [structured output](https://developers.openai.com/api/docs/guides/structured-outputs)
+and [speech transcription](https://developers.openai.com/api/docs/guides/speech-to-text)
+APIs. Model availability depends on the configured API account.
+
+### Telegram
+
+Connect the account through the Profile link as described above. In a private
+bot chat, `/start` displays **Task yaratish**. Press it (or send `/create`), then
+send text or a voice message, for example:
+
+> Muslima Zokirjonovaga websiteni fix qilsin, deadline 23 may.
+
+The bot creates a task, assigns the uniquely matched active employee, and replies
+with its title, assignee, deadline, and link. Voice messages are limited to 5
+minutes and 20 MB. Unlinked users and group chats cannot create tasks. A repeated
+delivery of the same Telegram message reuses its stored result.
+
+### Tiko frontend integration
+
+This repository contains the backend only. Add a **Task yaratish** mode and a
+microphone/audio upload control to the frontend Tiko widget. Keep the existing
+feedback mode on `POST /api/v1/support/bot/`; send task requests directly to
+`POST /api/v1/ai/tasks/` with the user's Bearer access token. Support feedback is
+not interpreted as a task and the support Telegram chat is not an identity source.
+Assignment notifications continue to reach connected Telegram accounts.
+
+Text request (JSON):
+
+```json
+{
+  "request_id": "2c1e3012-a7b3-4e2c-8ed8-ab5b48188e92",
+  "text": "Muslima Zokirjonovaga websiteni fix qilsin, deadline 23 may"
+}
+```
+
+For voice, send `multipart/form-data` with `request_id` and `audio` instead of
+`text`. Accepted extensions: OGG, MP3, MP4, MPEG, MPGA, M4A, WAV, WEBM, FLAC;
+maximum 20 MB. Browser MediaRecorder WEBM files work with this endpoint. Let the
+browser set the multipart boundary. Send exactly one of `text` or `audio`.
+
+Generate a UUID per submission and reuse it on network retries. The response is
+`201` with `status: "created"`, `message`, `transcript`, and `task` (including its
+ID, main assignee, department, optional project and ISO deadline). Replaying the
+same request returns the same result; changing content with the same ID is `400`.
+
+An ambiguous/missing employee, invalid or past date, unknown project, or incomplete
+request returns `200` with `status: "needs_clarification"`, `message`, and
+`transcript`, without creating a task. Display the message and ask the user to
+resubmit the **complete corrected request with a new UUID**. Follow-ups are
+stateless: sending only a name or date will not complete a previous request.
+Names match case-insensitively, ignoring apostrophe variants; uncertain spelling
+is never auto-assigned. Use the employee's email to disambiguate duplicate names.
+Dates without a year use their next occurrence in Asia/Tashkent. No deadline is
+invented when omitted. Explicit projects must belong to the assignee's department.
+
+Unauthenticated/unauthorized requests return `401/403`, invalid input returns
+`400`, and provider/configuration failures return `503`. Error responses follow
+the existing `{success: false, errors: ...}` API envelope. Audio is processed in
+memory and not retained; the transcript and result are stored for deduplication.
+Processing is synchronous (up to two 45-second AI calls plus Telegram download);
+configure proxy request timeouts accordingly. PostgreSQL locks serialize AI
+submissions by user across workers. Apply per-user/IP request limits at the
+deployment gateway when exposing this paid API publicly.
+
+Run the backend regression tests with `python manage.py test apps.test_ai_tasks
+apps.tests`; tests mock external AI/Telegram calls and use PostgreSQL.

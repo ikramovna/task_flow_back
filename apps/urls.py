@@ -3,6 +3,7 @@ from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from .serializers import SafeTokenRefreshSerializer
+from .views import AITaskView
 from .views import AccountDeleteView, AnalyticsView, ConversationViewSet, DashboardView, DepartmentViewSet, EventViewSet, MemberViewSet, MessageViewSet, NotificationViewSet, PasswordChangeView, PasswordResetConfirmView, PasswordResetRequestView, PreferenceView, ProfileView, ProjectViewSet, ReportViewSet, SupportBotView, TaskViewSet, TelegramIntegrationView, TelegramWebhookSetupView, TelegramWebhookView, TwoFactorView
 
 router = DefaultRouter()
@@ -31,6 +32,7 @@ urlpatterns = [
     path("analytics/", AnalyticsView.as_view(), name="analytics"),
     path("dashboard/", DashboardView.as_view(), name="dashboard"),
     path("support/bot/", SupportBotView.as_view(), name="support-bot"),
+    path("ai/tasks/", AITaskView.as_view(), name="ai-task-create"),
     path("me/telegram/", TelegramIntegrationView.as_view(), name="telegram-integration"),
     path("telegram/webhook/", TelegramWebhookView.as_view(), name="telegram-webhook"),
     path("telegram/setup-webhook/", TelegramWebhookSetupView.as_view(), name="telegram-setup-webhook"),

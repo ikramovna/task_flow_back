@@ -119,7 +119,7 @@ class TelegramIntegrationApiTests(APITestCase):
         )
         response = self.client.post(
             "/api/v1/telegram/webhook/",
-            {"message": {"text": "/start one-time-token", "chat": {"id": 987}, "from": {"id": 654, "username": "tester"}}},
+            {"message": {"text": "/start one-time-token", "chat": {"id": 987, "type": "private"}, "from": {"id": 654, "username": "tester"}}},
             format="json",
             HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="test-secret",
         )

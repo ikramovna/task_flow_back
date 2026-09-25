@@ -36,6 +36,9 @@ from .telegram_support import TelegramSupportError, send_support_message
 from .telegram import TelegramError, bot_api, webhook_url
 from .task_visibility import PRIVILEGED_TASK_ROLES, visible_tasks_for
 from .reporting import REPORT_TEMPLATES, build_report_docx, build_report_result
+from .task_creation import ensure_task_creator, save_task
+from .ai_tasks import AITaskInputSerializer, create_ai_task
+from .telegram_tasks import handle_task_message, MENU
 
 
 class PasswordResetRequestView(generics.GenericAPIView):
@@ -407,9 +410,7 @@ class TaskViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
             raise serializers.ValidationError({
                 "assignees": "Select at least one assignee with a department."
             })
-        self.ensure_department_task_creator(department)
-        task = serializer.save(created_by=self.request.user)
-        notify_task_assigned(task, self.request.user, task.assignees.all())
+        save_task(serializer, self.request.user)
 
     @action(detail=False, methods=["get"], url_path="assignees")
     def assignees(self, request):
@@ -451,14 +452,7 @@ class TaskViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
         return Response(serializer.data)
 
     def ensure_department_task_creator(self, department):
-        user = self.request.user
-        is_privileged = user.is_superuser or user.role in PRIVILEGED_TASK_ROLES
-        if not user.is_active or (
-            not is_privileged and not user.can_access_department(department)
-        ):
-            raise PermissionDenied(
-                "You can create tasks only in a department you can access."
-            )
+        ensure_task_creator(self.request.user, department)
 
     def ensure_department_task_manager(self, department):
         user = self.request.user
@@ -1296,6 +1290,22 @@ class DashboardView(APIView):
         })
 
 
+class AITaskView(APIView):
+    permission_classes = (IsAuthenticated,)
+    parser_classes = (JSONParser, MultiPartParser, FormParser)
+
+    @extend_schema(request=AITaskInputSerializer, responses={200: OpenApiTypes.OBJECT, 201: OpenApiTypes.OBJECT})
+    def post(self, request):
+        serializer = AITaskInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+        result = create_ai_task(
+            user=request.user, request_key=f"web:{data['request_id']}",
+            text=data.get("text", ""), audio=data.get("audio"),
+        )
+        return Response(result, status=201 if result["status"] == "created" else 200)
+
+
 class SupportBotView(APIView):
     permission_classes = (IsAuthenticated,)
     parser_classes = (JSONParser, FormParser, MultiPartParser)
@@ -1652,12 +1662,15 @@ class TelegramWebhookView(APIView):
         chat_id = chat.get("id")
         if not chat_id:
             return Response({"ok": True})
+        if chat.get("type") != "private" or not sender.get("id"):
+            return Response({"ok": True})
 
         if text.startswith("/start "):
             token = text.split(maxsplit=1)[1].strip()
             integration = TelegramIntegration.objects.filter(
                 link_token=token,
                 link_token_expires_at__gt=timezone.now(),
+                user__is_active=True,
             ).first()
             if not integration:
                 bot_api("sendMessage", chat_id=chat_id, text="This connection link is invalid or expired.")
@@ -1674,9 +1687,12 @@ class TelegramWebhookView(APIView):
             integration.link_token = None
             integration.link_token_expires_at = None
             integration.save()
-            bot_api("sendMessage", chat_id=chat_id, text="✅ Telegram successfully connected to TaskFlow.")
-        elif text.startswith("/start"):
-            bot_api("sendMessage", chat_id=chat_id, text="Open TaskFlow → Profile → Connect Telegram first.")
+            bot_api("sendMessage", chat_id=chat_id, text="✅ Telegram successfully connected to TaskFlow. Task yaratish tugmasini bosing.", reply_markup=MENU)
+        else:
+            try:
+                handle_task_message(message)
+            except TelegramError:
+                return Response({"ok": False}, status=502)
         return Response({"ok": True})
 
 
