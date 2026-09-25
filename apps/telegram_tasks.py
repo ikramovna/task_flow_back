@@ -1,5 +1,8 @@
 import json
 import re
+from html import escape
+
+from django.utils import timezone
 from urllib.error import URLError
 from urllib.request import urlopen
 
@@ -13,24 +16,111 @@ from .models import TelegramIntegration
 from .telegram import TelegramError, bot_api
 
 
-MENU = json.dumps({"inline_keyboard": [[{"text": "Create task", "callback_data": "task:create"}]]})
+MENU = json.dumps({"inline_keyboard": [
+    [{"text": "✍️ Create task", "callback_data": "task:create"},
+     {"text": "🎙 Voice task", "callback_data": "task:voice"}],
+    [{"text": "📋 Template", "callback_data": "task:template"},
+     {"text": "💡 Example", "callback_data": "task:example"}],
+    [{"text": "❔ Help", "callback_data": "task:help"}],
+]}, ensure_ascii=False)
+BACK_MENU = json.dumps({"inline_keyboard": [
+    [{"text": "📋 Template", "callback_data": "task:template"},
+     {"text": "💡 Example", "callback_data": "task:example"}],
+    [{"text": "‹ Main menu", "callback_data": "task:menu"}],
+]}, ensure_ascii=False)
+BOT_COMMANDS = [
+    {"command": "menu", "description": "Open the Tiko task menu"},
+    {"command": "create", "description": "Create a task from text"},
+    {"command": "voice", "description": "Create a task from a voice message"},
+    {"command": "template", "description": "Copy a task template"},
+    {"command": "example", "description": "See a complete task example"},
+    {"command": "help", "description": "How Tiko works"},
+]
+HOME = (
+    "<b>TIKO · TASKFLOW</b>\n"
+    "<i>Your task assistant</i>\n\n"
+    "Turn a message into an assigned task.\n"
+    "Choose how you want to start below.\n\n"
+    "✍️ <b>Text</b> — describe the work\n"
+    "🎙 <b>Voice</b> — say it in your own words\n"
+    "📋 <b>Template</b> — fill in the details\n\n"
+    "<i>English · Uzbek · Russian</i>"
+)
 PROMPT = (
-    "Create a task with Tiko\n\n"
-    "Send a text or voice message describing the task, who should do it, and the deadline.\n\n"
-    "Example:\n"
-    "Assign Muslima Zokirjonova a task to fix the website's login page. "
-    "Resolve the sign-in error and check that users can log in on both desktop and mobile. "
-    "Set the deadline to 23 May next year and the priority to high.\n\n"
-    "Use an existing employee's full name or email. You can write or speak in English, Uzbek, or Russian. "
-    "If anything is unclear, I will ask you to resend the complete request with the missing details."
+    "✍️ <b>CREATE A TASK</b>\n\n"
+    "<b>1 · What needs to be done?</b>\nGive the task a clear title and describe the expected result.\n\n"
+    "<b>2 · Who should do it?</b>\nUse an existing employee’s full name or email.\n\n"
+    "<b>3 · When is it due?</b>\nInclude the day, month and year. Add a priority or project if needed.\n\n"
+    "<i>Send your complete request as one message. Clear requests create a task immediately.</i>"
+)
+TEMPLATE = (
+    "📋 <b>TASK TEMPLATE</b>\n\n"
+    "Copy the block below, replace the brackets, and send it back.\n\n"
+    "<pre>Create a task:\n"
+    "Task title: [Short, clear title]\n"
+    "Assign to: [Full name or email]\n"
+    "Description: [Work to do and expected result]\n"
+    "Priority: [Low / Medium / High]\n"
+    "Deadline: [Day Month Year]\n"
+    "Project: [Existing project name / No project]</pre>\n\n"
+    "<i>Department comes from the assignee. Status starts as Not Started.</i>"
+)
+VOICE = (
+    "🎙 <b>CREATE WITH YOUR VOICE</b>\n\n"
+    "<b>Hold the microphone button</b> in Telegram and describe:\n\n"
+    "• What needs to be done\n• The assignee’s full name\n• The deadline, including the year\n"
+    "• Priority and project, if needed\n\n"
+    "<i>Up to 5 minutes · 20 MB. Clear requests create a task immediately.</i>"
+)
+HELP = (
+    "❔ <b>HOW TIKO WORKS</b>\n\n"
+    "<b>Describe → Match → Create</b>\n"
+    "AI extracts the task details. TaskFlow checks the assignee and your permissions, then saves the task.\n\n"
+    "<b>If details are unclear</b>\nResend the complete corrected request, not just the missing name or date.\n\n"
+    "<b>Defaults</b>\nDepartment: assignee’s department\nStatus: Not Started\n"
+    "Priority: Medium if omitted\nEffort score: 1\nHidden: No\nCategory: empty\n\n"
+    "<i>Use /menu whenever you want to return here.</i>"
 )
 
 
-def send_menu(chat_id, text="Welcome to Tiko! Choose Create task to get started."):
-    # Remove the old persistent keyboard before sending the new inline menu.
+def screen_text(screen):
+    if screen == "example":
+        today = timezone.localdate()
+        year = today.year if (today.month, today.day) <= (5, 23) else today.year + 1
+        return (
+            "💡 <b>EXAMPLE TASK</b>\n\n"
+            "A complete request ready to adapt:\n\n"
+            "<pre>Create a task:\n"
+            "Task title: Fix website login page sign-in error\n"
+            "Assign to: Muslima Zokirjonova\n"
+            "Description: Investigate and fix the sign-in error. Verify successful login on desktop and mobile.\n"
+            "Priority: High\n"
+            f"Deadline: 23 May {year}\n"
+            "Project: No project</pre>\n\n"
+            "<i>Replace the assignee with an existing employee and choose your actual deadline.</i>"
+        )
+    return {"menu": HOME, "create": PROMPT, "template": TEMPLATE,
+            "voice": VOICE, "help": HELP}[screen]
+
+
+def send_screen(chat_id, screen, message_id=None):
+    payload = {"chat_id": chat_id, "text": screen_text(screen), "parse_mode": "HTML",
+               "reply_markup": MENU if screen == "menu" else BACK_MENU}
+    if message_id:
+        # Edit the menu in place so navigation does not flood the conversation.
+        try:
+            bot_api("editMessageText", message_id=message_id, **payload)
+        except TelegramError as exc:
+            if "message is not modified" not in str(exc).lower():
+                raise
+    else:
+        bot_api("sendMessage", **payload)
+
+
+def send_menu(chat_id, text="Welcome to Tiko! Your task assistant is ready."):
     bot_api("sendMessage", chat_id=chat_id, text=text,
             reply_markup=json.dumps({"remove_keyboard": True}))
-    bot_api("sendMessage", chat_id=chat_id, text="What would you like to do?", reply_markup=MENU)
+    send_screen(chat_id, "menu")
 
 
 def handle_task_callback(callback):
@@ -49,8 +139,9 @@ def handle_task_callback(callback):
                 text="Connect Telegram from your TaskFlow profile first.", show_alert=True)
         return
     bot_api("answerCallbackQuery", callback_query_id=callback["id"])
-    if callback.get("data") == "task:create":
-        bot_api("sendMessage", chat_id=chat["id"], text=PROMPT, reply_markup=MENU)
+    screen = str(callback.get("data", "")).removeprefix("task:")
+    if screen in {"menu", "create", "voice", "template", "example", "help"}:
+        send_screen(chat["id"], screen, message.get("message_id"))
 
 
 def download_voice(voice):
@@ -91,12 +182,16 @@ def handle_task_message(message):
     if text in {"/start", "Task yaratish"}:
         send_menu(chat_id)
         return
-    if text in {"/help", "/create", "Create task", "/cancel"}:
-        bot_api("sendMessage", chat_id=chat_id, text=PROMPT, reply_markup=MENU)
+    command = text.split("@", 1)[0] if " " not in text else text
+    screens = {"/menu": "menu", "/create": "create", "Create task": "create",
+               "/voice": "voice", "/template": "template", "/example": "example",
+               "/help": "help", "/cancel": "menu"}
+    if command in screens:
+        send_screen(chat_id, screens[command])
         return
     voice = message.get("voice")
     if not (text or voice) or not message.get("message_id"):
-        bot_api("sendMessage", chat_id=chat_id, text=PROMPT, reply_markup=MENU)
+        send_screen(chat_id, "menu")
         return
     if text.startswith("/create "):
         text = text.split(maxsplit=1)[1]
@@ -106,15 +201,24 @@ def handle_task_message(message):
             text=text, audio_loader=(lambda: download_voice(voice)) if voice else None,
             source_identity=voice.get("file_unique_id", voice.get("file_id", "")) if voice else "",
         )
-        reply = result["message"]
+        reply = "<b>Let’s clarify a few details</b>\n\n" + escape(result["message"])
         markup = MENU
         if result["status"] == "created":
+            task = result["task"]
+            reply = (
+                "✅ <b>TASK CREATED</b>\n\n"
+                f"<b>{escape(task['title'])}</b>\n\n"
+                f"👤 <b>Assigned to</b>  {escape(task['assignee_name'])}\n"
+                f"📅 <b>Deadline</b>  {escape(task['due_date'] or 'Not specified')}\n"
+                f"⚡ <b>Priority</b>  {escape(task['priority'].title())}\n"
+                "📌 <b>Status</b>  Not Started"
+            )
             markup = json.dumps({"inline_keyboard": [
                 [{"text": "Open task", "url": f"{settings.FRONTEND_URL.rstrip('/')}/tasks/{result['task']['id']}"}],
                 [{"text": "Create another task", "callback_data": "task:create"}],
             ]})
     except APIException as exc:
         # A failed analysis rolls back the receipt so a fresh message can retry.
-        reply = str(exc.detail)[:1500]
+        reply = "<b>Unable to create task</b>\n\n" + escape(str(exc.detail)[:1500])
         markup = MENU
-    bot_api("sendMessage", chat_id=chat_id, text=reply, reply_markup=markup)
+    bot_api("sendMessage", chat_id=chat_id, text=reply, parse_mode="HTML", reply_markup=markup)

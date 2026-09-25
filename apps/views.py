@@ -1,3 +1,4 @@
+import json
 import secrets
 from datetime import date, datetime, time, timedelta
 from email.mime.image import MIMEImage
@@ -38,7 +39,7 @@ from .task_visibility import PRIVILEGED_TASK_ROLES, visible_tasks_for
 from .reporting import REPORT_TEMPLATES, build_report_docx, build_report_result
 from .task_creation import ensure_task_creator, save_task
 from .ai_tasks import AITaskInputSerializer, create_ai_task
-from .telegram_tasks import handle_task_message, handle_task_callback, send_menu
+from .telegram_tasks import handle_task_message, handle_task_callback, send_menu, BOT_COMMANDS
 
 
 class PasswordResetRequestView(generics.GenericAPIView):
@@ -1718,6 +1719,8 @@ class TelegramWebhookSetupView(APIView):
                 secret_token=settings.TELEGRAM_WEBHOOK_SECRET,
                 allowed_updates='["message", "callback_query"]',
             )
+            bot_api("setMyCommands", commands=json.dumps(BOT_COMMANDS))
+            bot_api("setChatMenuButton", menu_button=json.dumps({"type": "commands"}))
         except TelegramError as exc:
             return Response({"detail": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
         return Response({"ok": bool(result), "url": webhook_url(request)})

@@ -152,6 +152,15 @@ updates as well as messages. Send `/start` to remove the old reply keyboard and
 display the English inline menu. Bot guidance, confirmations and errors are in
 English; task input can still be English, Uzbek or Russian.
 
+The bot also provides an English dashboard with **Create task**, **Voice task**,
+**Template**, **Example**, and **Help** screens. Inline navigation edits the same
+message; `/menu` opens a fresh dashboard. Templates and examples use copyable
+code blocks. Task confirmations display the assignee, deadline and priority.
+Register the webhook again after deploying this menu update: setup also runs
+`setMyCommands` and `setChatMenuButton` to enable Telegram's native **Menu** button
+next to the message composer. This is a native bot menu, not a Mini App, and
+requires no frontend deployment or extra website.
+
 ### Tiko frontend integration
 
 This repository contains the backend only. Add a **Task yaratish** mode and a

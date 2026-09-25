@@ -149,14 +149,15 @@ class TelegramAITaskTests(AITaskFixture, APITestCase):
         self.assertTrue(json.loads(self.bot.call_args_list[0].kwargs["reply_markup"])["remove_keyboard"])
         self.extractor.assert_not_called()
 
-    def test_inline_callback_shows_example_without_creating_task(self):
+    def test_inline_callback_shows_create_screen_without_creating_task(self):
         callback = {"id": "cb1", "from": {"id": 101}, "message": self.message, "data": "task:create"}
         response = self.client.post("/api/v1/telegram/webhook/", {"callback_query": callback},
                                     format="json", HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="secret")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.bot.call_args_list[0].args[0], "answerCallbackQuery")
-        self.assertIn("Example:", self.bot.call_args.kwargs["text"])
-        self.assertIn("Muslima Zokirjonova", self.bot.call_args.kwargs["text"])
+        self.assertEqual(self.bot.call_args.args[0], "editMessageText")
+        self.assertEqual(self.bot.call_args.kwargs["parse_mode"], "HTML")
+        self.assertIn("CREATE A TASK", self.bot.call_args.kwargs["text"])
         self.extractor.assert_not_called()
         self.assertFalse(Task.objects.exists())
 
@@ -174,7 +175,42 @@ class TelegramAITaskTests(AITaskFixture, APITestCase):
         self.user.save()
         response = self.client.post("/api/v1/telegram/setup-webhook/", {}, format="json")
         self.assertEqual(response.status_code, 200)
-        self.assertIn("callback_query", json.loads(bot.call_args.kwargs["allowed_updates"]))
+        self.assertIn("callback_query", json.loads(bot.call_args_list[0].kwargs["allowed_updates"]))
+        self.assertEqual(bot.call_args_list[1].args[0], "setMyCommands")
+        self.assertEqual(bot.call_args_list[2].args[0], "setChatMenuButton")
+        self.assertEqual(json.loads(bot.call_args_list[2].kwargs["menu_button"]), {"type": "commands"})
+
+    def test_all_menu_screens_navigate_without_ai(self):
+        for screen, heading in [("menu", "TASKFLOW"), ("voice", "CREATE WITH YOUR VOICE"),
+                                ("template", "TASK TEMPLATE"), ("example", "EXAMPLE TASK"),
+                                ("help", "HOW TIKO WORKS")]:
+            with self.subTest(screen=screen):
+                callback = {"id": "cb", "from": {"id": 101}, "message": self.message,
+                            "data": f"task:{screen}"}
+                response = self.client.post("/api/v1/telegram/webhook/", {"callback_query": callback},
+                                            format="json", HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="secret")
+                self.assertEqual(response.status_code, 200)
+                self.assertIn(heading, self.bot.call_args.kwargs["text"])
+        self.extractor.assert_not_called()
+        self.assertFalse(Task.objects.exists())
+
+    def test_template_command_and_repeated_navigation(self):
+        self.message["text"] = "/template"
+        self.webhook()
+        self.assertIn("<pre>Create a task:", self.bot.call_args.kwargs["text"])
+        self.assertIn("[Full name or email]", self.bot.call_args.kwargs["text"])
+        self.bot.side_effect = [None, TelegramError("Bad Request: message is not modified")]
+        callback = {"id": "cb", "from": {"id": 101}, "message": self.message, "data": "task:template"}
+        response = self.client.post("/api/v1/telegram/webhook/", {"callback_query": callback},
+                                    format="json", HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="secret")
+        self.assertEqual(response.status_code, 200)
+        self.extractor.assert_not_called()
+
+    def test_task_confirmation_escapes_html(self):
+        self.parsed["title"] = "Fix <login> & signup"
+        self.webhook()
+        self.assertIn("Fix &lt;login&gt; &amp; signup", self.bot.call_args.kwargs["text"])
+        self.assertIn("TASK CREATED", self.bot.call_args.kwargs["text"])
 
     def test_unlinked_sender_and_group_cannot_create(self):
         self.message["from"]["id"] = 999
