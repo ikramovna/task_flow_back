@@ -161,20 +161,22 @@ class TelegramAITaskTests(AITaskFixture, APITestCase):
         response = self.client.post("/api/v1/telegram/webhook/", {"callback_query": callback},
                                     format="json", HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="secret")
         self.assertEqual(response.status_code, 200)
-        calls = {call.args[0]: call.kwargs for call in self.bot.call_args_list}
-        self.assertEqual([call.args[0] for call in self.bot.call_args_list],
-                         ["answerCallbackQuery", "sendMessage"])
-        self.assertEqual(calls["sendMessage"]["parse_mode"], "HTML")
-        self.assertIn("CREATE A TASK", calls["sendMessage"]["text"])
+        self.bot.assert_called_once_with("answerCallbackQuery", callback_query_id="cb1", timeout=3)
+        self.assertEqual(response.data["method"], "sendMessage")
+        self.assertEqual(response.data["parse_mode"], "HTML")
+        self.assertIn("CREATE A TASK", response.data["text"])
+        self.assertEqual(response["Content-Type"], "application/json")
+        self.assertIn("inline_keyboard", response.data["reply_markup"])
         self.extractor.assert_not_called()
         self.assertFalse(Task.objects.exists())
 
     def test_inline_callback_rejects_unlinked_sender(self):
         callback = {"id": "cb2", "from": {"id": 999}, "message": self.message, "data": "task:create"}
-        self.client.post("/api/v1/telegram/webhook/", {"callback_query": callback},
-                         format="json", HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="secret")
-        self.bot.assert_called_once()
-        self.assertTrue(self.bot.call_args.kwargs["show_alert"])
+        response = self.client.post("/api/v1/telegram/webhook/", {"callback_query": callback},
+                                    format="json", HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="secret")
+        self.bot.assert_not_called()
+        self.assertEqual(response.data["method"], "answerCallbackQuery")
+        self.assertTrue(response.data["show_alert"])
         self.extractor.assert_not_called()
 
     @patch("apps.views.bot_api", return_value=True)
@@ -198,8 +200,8 @@ class TelegramAITaskTests(AITaskFixture, APITestCase):
                 response = self.client.post("/api/v1/telegram/webhook/", {"callback_query": callback},
                                             format="json", HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="secret")
                 self.assertEqual(response.status_code, 200)
-                sent = [call for call in self.bot.call_args_list if call.args[0] == "sendMessage"]
-                self.assertIn(heading, sent[-1].kwargs["text"])
+                self.assertEqual(response.data["method"], "sendMessage")
+                self.assertIn(heading, response.data["text"])
         self.extractor.assert_not_called()
         self.assertFalse(Task.objects.exists())
 
@@ -213,8 +215,10 @@ class TelegramAITaskTests(AITaskFixture, APITestCase):
             response = self.client.post("/api/v1/telegram/webhook/", {"callback_query": callback},
                                         format="json", HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="secret")
             self.assertEqual(response.status_code, 200)
-        self.assertEqual([call.args[0] for call in self.bot.call_args_list[-4:]],
-                         ["answerCallbackQuery", "sendMessage", "answerCallbackQuery", "sendMessage"])
+            self.assertEqual(response.data["method"], "sendMessage")
+            self.assertIn("TASK TEMPLATE", response.data["text"])
+        self.assertEqual([call.args[0] for call in self.bot.call_args_list[-2:]],
+                         ["answerCallbackQuery", "answerCallbackQuery"])
         self.extractor.assert_not_called()
 
     def test_expired_callback_still_sends_selected_screen(self):
@@ -226,8 +230,8 @@ class TelegramAITaskTests(AITaskFixture, APITestCase):
         response = self.client.post("/api/v1/telegram/webhook/", {"callback_query": callback},
                                     format="json", HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="secret")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(self.bot.call_args.args[0], "sendMessage")
-        self.assertIn("EXAMPLE TASK", self.bot.call_args.kwargs["text"])
+        self.assertEqual(response.data["method"], "sendMessage")
+        self.assertIn("EXAMPLE TASK", response.data["text"])
 
     def test_task_confirmation_escapes_html(self):
         self.parsed["title"] = "Fix <login> & signup"

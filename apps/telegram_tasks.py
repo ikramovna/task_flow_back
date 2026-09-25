@@ -105,9 +105,14 @@ def screen_text(screen):
             "voice": VOICE, "help": HELP}[screen]
 
 
+def screen_payload(chat_id, screen):
+    return {"chat_id": chat_id, "text": screen_text(screen), "parse_mode": "HTML",
+            "reply_markup": json.loads(MENU if screen == "menu" else BACK_MENU)}
+
+
 def send_screen(chat_id, screen):
-    payload = {"chat_id": chat_id, "text": screen_text(screen), "parse_mode": "HTML",
-               "reply_markup": MENU if screen == "menu" else BACK_MENU}
+    payload = screen_payload(chat_id, screen)
+    payload["reply_markup"] = json.dumps(payload["reply_markup"], ensure_ascii=False)
     bot_api("sendMessage", **payload)
 
 
@@ -122,25 +127,25 @@ def handle_task_callback(callback):
     chat = message.get("chat") or {}
     sender = callback.get("from") or {}
     if not callback.get("id"):
-        return
+        return None
     connected = (chat.get("type") == "private" and sender.get("id") and
                  TelegramIntegration.objects.filter(
                      telegram_user_id=sender["id"], telegram_chat_id=chat.get("id"),
                      is_connected=True, user__is_active=True,
                  ).exists())
     if not connected:
-        bot_api("answerCallbackQuery", callback_query_id=callback["id"],
-                text="Connect Telegram from your TaskFlow profile first.", show_alert=True)
-        return
+        return {"method": "answerCallbackQuery", "callback_query_id": callback["id"],
+                "text": "Connect Telegram from your TaskFlow profile first.", "show_alert": True}
     screen = str(callback.get("data", "")).removeprefix("task:")
-    # Clear Telegram's loading indicator before sending the requested screen.
-    # Expired callback IDs should not prevent the user from getting a response.
+    if screen not in {"menu", "create", "voice", "template", "example", "help"}:
+        return {"method": "answerCallbackQuery", "callback_query_id": callback["id"]}
+    # Clear Telegram's loading indicator quickly. Telegram sends the selected
+    # screen from the webhook response, avoiding a second outbound API request.
     try:
-        bot_api("answerCallbackQuery", callback_query_id=callback["id"])
+        bot_api("answerCallbackQuery", callback_query_id=callback["id"], timeout=3)
     except TelegramError:
-        logger.warning("Could not acknowledge Telegram menu callback")
-    if screen in {"menu", "create", "voice", "template", "example", "help"}:
-        send_screen(chat["id"], screen)
+        logger.warning("Could not acknowledge Telegram menu callback; sending screen via webhook response")
+    return {"method": "sendMessage", **screen_payload(chat["id"], screen)}
 
 
 def download_voice(voice):

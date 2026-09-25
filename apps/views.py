@@ -1658,10 +1658,10 @@ class TelegramWebhookView(APIView):
 
         if request.data.get("callback_query"):
             try:
-                handle_task_callback(request.data["callback_query"])
+                callback_reply = handle_task_callback(request.data["callback_query"])
             except TelegramError:
                 return Response({"ok": False}, status=502)
-            return Response({"ok": True})
+            return Response(callback_reply or {"ok": True})
 
         message = request.data.get("message") or {}
         text = message.get("text", "")

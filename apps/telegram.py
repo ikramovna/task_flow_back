@@ -18,7 +18,7 @@ class TelegramError(Exception):
     pass
 
 
-def bot_api(method, **payload):
+def bot_api(method, *, timeout=10, **payload):
     token = settings.TELEGRAM_BOT_TOKEN
     if not token:
         raise TelegramError("TELEGRAM_BOT_TOKEN is not configured.")
@@ -30,7 +30,7 @@ def bot_api(method, **payload):
     )
     started = time.monotonic()
     try:
-        with urlopen(request, timeout=10) as response:
+        with urlopen(request, timeout=timeout) as response:
             result = json.loads(response.read())
     except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
         raise TelegramError("Telegram service is unavailable.") from exc
