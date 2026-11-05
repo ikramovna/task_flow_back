@@ -195,6 +195,21 @@ class Task(TimeStampedModel):
         return super().save(*args, **kwargs)
 
 
+def task_attachment_upload_path(instance, filename):
+    return f"task_attachments/{uuid.uuid4().hex}/{filename}"
+
+
+class TaskAttachment(TimeStampedModel):
+    task = models.ForeignKey(Task, on_delete=models.CASCADE, related_name="attachments")
+    file = models.FileField(upload_to=task_attachment_upload_path)
+    name = models.CharField(max_length=255)
+    size = models.PositiveBigIntegerField()
+    uploaded_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name="task_attachments")
+
+    class Meta:
+        ordering = ("created_at",)
+
+
 class Event(TimeStampedModel):
     class Type(models.TextChoices):
         MEETING = "meeting", "Meeting"

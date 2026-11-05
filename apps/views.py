@@ -9,6 +9,7 @@ from django.conf import settings
 from django.contrib.auth.tokens import default_token_generator
 from django.template.loader import render_to_string
 from django.http import FileResponse
+from django.shortcuts import get_object_or_404
 from django.db import transaction
 from django.db.models import Avg, Count, F, Prefetch, Q, Sum
 from django.db.models.functions import TruncDate, TruncMonth, TruncWeek
@@ -366,6 +367,7 @@ class ProjectViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
 class TaskViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
     queryset = Task.objects.none()
     serializer_class = TaskSerializer
+    parser_classes = (JSONParser, FormParser, MultiPartParser)
     # Creation permissions are checked in perform_create so managers can assign
     # tasks outside their normal department scope. Reads remain queryset-scoped.
     permission_classes = (IsAuthenticated,)
@@ -391,13 +393,13 @@ class TaskViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
                 Q(department=user.department) | Q(pk__in=assigned_task_ids)
             )
         qs = visible_tasks_for(qs, user)
-        qs = qs.select_related("department", "project", "created_by", "main_assignee").prefetch_related("assignees").distinct()
+        qs = qs.select_related("department", "project", "created_by", "main_assignee").prefetch_related("assignees", "attachments").distinct()
         archived = self.request.query_params.get("archived", "").lower()
         if self.action == "unarchive":
             qs = qs.filter(is_archived=True)
-        elif archived in ("1", "true", "yes"):
+        elif self.action != "download_attachment" and archived in ("1", "true", "yes"):
             qs = qs.filter(is_archived=True)
-        elif archived != "all":
+        elif self.action != "download_attachment" and archived != "all":
             qs = qs.filter(is_archived=False)
         if self.department_id():
             qs = qs.filter(department_id=self.department_id())
@@ -412,6 +414,12 @@ class TaskViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
                 "assignees": "Select at least one assignee with a department."
             })
         save_task(serializer, self.request.user)
+
+    @action(detail=True, methods=["get"], url_path=r"attachments/(?P<attachment_id>[^/.]+)/download")
+    def download_attachment(self, request, pk=None, attachment_id=None):
+        task = self.get_object()
+        attachment = get_object_or_404(task.attachments, pk=attachment_id)
+        return FileResponse(attachment.file.open("rb"), as_attachment=True, filename=attachment.name)
 
     @action(detail=False, methods=["get"], url_path="assignees")
     def assignees(self, request):

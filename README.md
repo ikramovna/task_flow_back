@@ -52,6 +52,20 @@ Tasks may include an optional `project` UUID. Omitting it creates a standalone
 department task. Project progress and task counts are calculated from the tasks
 linked to that project.
 
+To attach files when creating a task, send `POST /api/v1/tasks/` as
+`multipart/form-data` with the usual task fields and up to 10 repeated `files`
+fields. Each file can be at most 20 MB. The response includes an `attachments`
+array with each file's name, size, and authenticated `download_url`. The same
+array appears in task detail responses. For example:
+
+```text
+department=<department-uuid>
+title=Prepare budget
+assignees=<user-uuid>
+files=<first file>
+files=<second file>
+```
+
 ## Notifications
 
 Use `GET /api/v1/notifications/?unread=true` for unread items, `GET /api/v1/notifications/unread_count/` for the bell counter, `POST /api/v1/notifications/<id>/mark_read/`, and `POST /api/v1/notifications/mark_all_read/`.

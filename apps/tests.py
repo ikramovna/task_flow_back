@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 from django.contrib.auth.tokens import default_token_generator
 from django.core import mail
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
 from django.utils import timezone
 from django.utils.encoding import force_bytes
@@ -12,7 +13,7 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import Conversation, ConversationParticipant, Department, Event, Message, Notification, Project, Report, Task, TelegramIntegration, User, UserPreference
+from .models import Conversation, ConversationParticipant, Department, Event, Message, Notification, Project, Report, Task, TaskAttachment, TelegramIntegration, User, UserPreference
 from .notifications import generate_deadline_notifications
 
 
@@ -757,6 +758,61 @@ class DepartmentScopedApiTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(str(response.data["created_by"]), str(self.member.pk))
         self.assertEqual(str(response.data["department"]), str(self.department.pk))
+
+    def test_task_create_accepts_multiple_files_and_scopes_downloads(self):
+        with TemporaryDirectory() as media_root, override_settings(MEDIA_ROOT=media_root):
+            response = self.client.post(
+                "/api/v1/tasks/",
+                {
+                    "department": str(self.department.pk),
+                    "title": "Task with files",
+                    "assignees": [str(self.member.pk)],
+                    "files": [
+                        SimpleUploadedFile("brief.txt", b"brief"),
+                        SimpleUploadedFile("notes.txt", b"notes"),
+                    ],
+                },
+                format="multipart",
+            )
+            self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+            self.assertEqual([item["name"] for item in response.data["attachments"]], ["brief.txt", "notes.txt"])
+            task_id = response.data["id"]
+            self.assertEqual(TaskAttachment.objects.filter(task_id=task_id).count(), 2)
+
+            detail = self.client.get(f"/api/v1/tasks/{task_id}/")
+            self.assertEqual(len(detail.data["attachments"]), 2)
+            download_url = response.data["attachments"][0]["download_url"]
+            download = self.client.get(download_url)
+            self.assertEqual(download.status_code, status.HTTP_200_OK)
+            self.assertEqual(b"".join(download.streaming_content), b"brief")
+            download.close()
+
+            Task.objects.filter(pk=task_id).update(is_archived=True)
+            archived_download = self.client.get(download_url)
+            self.assertEqual(archived_download.status_code, status.HTTP_200_OK)
+            archived_download.close()
+
+            outsider_department = Department.objects.create(name="Legal files", code="legal-files")
+            outsider = User.objects.create_user(
+                username="outsider-files", email="outsider-files@example.com",
+                password="pass12345", department=outsider_department,
+            )
+            self.client.force_authenticate(outsider)
+            self.assertEqual(self.client.get(download_url).status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_task_create_rejects_oversized_file_without_creating_task(self):
+        response = self.client.post(
+            "/api/v1/tasks/",
+            {
+                "department": str(self.department.pk),
+                "title": "Too large",
+                "assignees": [str(self.member.pk)],
+                "files": [SimpleUploadedFile("large.bin", b"x" * (20 * 1024 * 1024 + 1))],
+            },
+            format="multipart",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(Task.objects.filter(title="Too large").exists())
 
     def test_member_cannot_create_task_in_another_department(self):
         other_department = Department.objects.create(

@@ -1,4 +1,5 @@
 from django.contrib.auth.password_validation import validate_password
+from django.urls import reverse
 from django.db.models import Avg
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
@@ -6,7 +7,7 @@ from rest_framework import serializers
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 
-from .models import Conversation, ConversationParticipant, Department, Event, Message, Notification, Project, Report, Task, User, UserPreference
+from .models import Conversation, ConversationParticipant, Department, Event, Message, Notification, Project, Report, Task, TaskAttachment, User, UserPreference
 
 
 class SafeTokenRefreshSerializer(TokenRefreshSerializer):
@@ -189,15 +190,34 @@ class ProjectSerializer(serializers.ModelSerializer):
         return value if value is not None else obj.tasks.filter(status=Task.Status.COMPLETED).count()
 
 
+class TaskAttachmentSerializer(serializers.ModelSerializer):
+    download_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = TaskAttachment
+        fields = ("id", "name", "size", "created_at", "download_url")
+
+    def get_download_url(self, obj):
+        path = reverse("task-download-attachment", kwargs={
+            "pk": obj.task_id, "attachment_id": obj.pk,
+        })
+        request = self.context.get("request")
+        return request.build_absolute_uri(path) if request else path
+
+
 class TaskSerializer(serializers.ModelSerializer):
     assignee_details = UserBriefSerializer(source="assignees", many=True, read_only=True)
     main_assignee_detail = UserBriefSerializer(source="main_assignee", read_only=True)
     created_by_detail = TaskCreatorSerializer(source="created_by", read_only=True)
     project_detail = ProjectBriefSerializer(source="project", read_only=True)
+    attachments = TaskAttachmentSerializer(many=True, read_only=True)
+    files = serializers.ListField(
+        child=serializers.FileField(), write_only=True, required=False, max_length=10,
+    )
 
     class Meta:
         model = Task
-        fields = ("id", "department", "project", "project_detail", "title", "description", "status", "priority", "category", "effort_score", "assignees", "assignee_details", "main_assignee", "main_assignee_detail", "created_by", "created_by_detail", "due_date", "completed_at", "is_hidden", "is_archived", "archived_at", "archived_by", "progress", "created_at", "updated_at")
+        fields = ("id", "department", "project", "project_detail", "title", "description", "status", "priority", "category", "effort_score", "assignees", "assignee_details", "main_assignee", "main_assignee_detail", "created_by", "created_by_detail", "due_date", "completed_at", "is_hidden", "is_archived", "archived_at", "archived_by", "progress", "attachments", "files", "created_at", "updated_at")
         extra_kwargs = {"department": {"required": False}, "project": {"required": False, "allow_null": True}}
         read_only_fields = ("main_assignee", "created_by", "completed_at", "is_archived", "archived_at", "archived_by")
 
@@ -241,22 +261,40 @@ class TaskSerializer(serializers.ModelSerializer):
         return attrs
 
     def create(self, validated_data):
+        files = validated_data.pop("files", [])
         assignees = validated_data.pop("assignees", [])
         task = Task.objects.create(
             **validated_data,
             main_assignee=assignees[0] if assignees else None,
         )
         task.assignees.set(assignees)
+        for file in files:
+            TaskAttachment.objects.create(
+                task=task, file=file, name=file.name, size=file.size,
+                uploaded_by=self.context["request"].user,
+            )
         return task
 
     def update(self, instance, validated_data):
+        files = validated_data.pop("files", [])
         assignees = validated_data.pop("assignees", None)
         instance = super().update(instance, validated_data)
         if assignees is not None:
             instance.assignees.set(assignees)
             instance.main_assignee = assignees[0] if assignees else None
             instance.save(update_fields=("main_assignee", "updated_at"))
+        for file in files:
+            TaskAttachment.objects.create(
+                task=instance, file=file, name=file.name, size=file.size,
+                uploaded_by=self.context["request"].user,
+            )
         return instance
+
+    def validate_files(self, value):
+        for file in value:
+            if file.size > 20 * 1024 * 1024:
+                raise serializers.ValidationError("Each file must not exceed 20 MB.")
+        return value
 
 
 class EventSerializer(serializers.ModelSerializer):
