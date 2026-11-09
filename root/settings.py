@@ -48,7 +48,8 @@ OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
 OPENAI_TASK_MODEL = os.getenv('OPENAI_TASK_MODEL', 'gpt-5.4-mini')
 # Task extraction is simple: low reasoning keeps replies fast. Empty disables the parameter.
 OPENAI_REASONING_EFFORT = os.getenv('OPENAI_REASONING_EFFORT', 'low')
-OPENAI_TRANSCRIPTION_MODEL = os.getenv('OPENAI_TRANSCRIPTION_MODEL', 'gpt-4o-mini-transcribe')
+# The full model hears Uzbek and mixed-language speech much better than the mini one.
+OPENAI_TRANSCRIPTION_MODEL = os.getenv('OPENAI_TRANSCRIPTION_MODEL', 'gpt-4o-transcribe')
 
 
 # Application definition

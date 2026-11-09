@@ -105,7 +105,10 @@ def created_html(result):
     details = [who, f"📅 {task['due_date'] or 'No deadline'}"]
     if task["priority"] != "medium":
         details.append(f"⚡ {task['priority'].title()}")
-    return f"✅ <b>{escape(task['title'])}</b>\n" + escape(" · ".join(details))
+    text = f"✅ <b>{escape(task['title'])}</b>\n" + escape(" · ".join(details))
+    if result.get("heard"):
+        text += f"\n🎤 <i>{escape(result['heard'][:300])}</i>"
+    return text
 
 
 def created_payload(chat_id, result):

@@ -53,20 +53,30 @@ def validate_audio(audio):
     return audio
 
 
-def transcribe(audio):
+def transcription_prompt(names=()):
+    prompt = (
+        "A work task request in Uzbek, Russian or English, sometimes mixed. "
+        "Write it in the language spoken; do not translate. "
+        "Words: vazifa, muddat, ertaga, indinga, juma, hammaga, shoshilinch; "
+        "задача, срок, завтра, до пятницы, всем, срочно; task, deadline, tomorrow, everyone, urgent."
+    )
+    # Names are the hardest words to hear right; spelling them out fixes most mistakes.
+    names = [name for name in names if name][:80]
+    if names:
+        prompt += " Employees: " + ", ".join(names)[:1500] + "."
+    return prompt
+
+
+def transcribe(audio, names=()):
     validate_audio(audio)
     boundary = uuid.uuid4().hex
     extension = Path(audio.name).suffix.lower()
     body = (
         f'--{boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\n'
         f'{settings.OPENAI_TRANSCRIPTION_MODEL}\r\n'
+        f'--{boundary}\r\nContent-Disposition: form-data; name="temperature"\r\n\r\n0\r\n'
         f'--{boundary}\r\nContent-Disposition: form-data; name="prompt"\r\n\r\n'
-        'A TaskFlow task request in Uzbek, Russian or English, sometimes mixed. '
-        'Transcribe in the language spoken; do not translate. Keep employee names as said. '
-        'Uzbek: vazifa, task yarat, mas’ul, muddat, ertaga, indinga, dushanba, juma, '
-        'Muslimaga, Aliga, shoshilinch. '
-        'Russian: задача, создай задачу, срок, завтра, послезавтра, до пятницы, срочно. '
-        'English: task, assign to, deadline, tomorrow, by Friday, urgent.\r\n'
+        f'{transcription_prompt(names)}\r\n'
         f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="voice{extension}"\r\n'
         'Content-Type: application/octet-stream\r\n\r\n'
     ).encode() + audio.read(MAX_AUDIO_BYTES + 1) + f"\r\n--{boundary}--\r\n".encode()

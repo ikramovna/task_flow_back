@@ -585,11 +585,14 @@ class TelegramAITaskTests(AITaskFixture, APITestCase):
         download.return_value = SimpleUploadedFile("voice.ogg", b"audio")
         self.message.pop("text")
         self.message["voice"] = {"file_id": "abc", "file_unique_id": "unique"}
-        self.webhook()
+        first = self.webhook()
         self.webhook()
         self.assertEqual(Task.objects.count(), 1)
         download.assert_called_once()
         transcriber.assert_called_once()
+        # Speech recognition gets the real employee names; the reply shows what was heard.
+        self.assertIn("Muslima Zokirjonova", transcriber.call_args.kwargs["names"])
+        self.assertIn("🎤 <i>Muslima Zokirjonovaga websiteni fix qilish</i>", first.data["text"])
 
     @patch("apps.telegram_tasks.download_voice", side_effect=TelegramError("down"))
     def test_voice_download_failure_lets_telegram_retry(self, download):
@@ -680,9 +683,16 @@ class AIProviderTests(SimpleTestCase):
         self.assertEqual(args[0], "audio/transcriptions")
         self.assertIn(b'filename="voice.ogg"', args[1])
         self.assertIn(b'name="prompt"', args[1])
-        self.assertIn(b"Keep employee names as said", args[1])
+        self.assertIn(b"do not translate", args[1])
         self.assertIn("завтра".encode(), args[1])
+        self.assertIn(b'name="temperature"\r\n\r\n0\r\n', args[1])
+        self.assertNotIn(b"Employees:", args[1])
         self.assertIn(b"sample audio", args[1])
+
+    @patch("apps.ai_provider.request_ai", return_value={"text": "ok"})
+    def test_employee_names_are_given_to_speech_recognition(self, provider):
+        transcribe(SimpleUploadedFile("voice.ogg", b"a"), names=["Muslima Zokirjonova", "Abdunosir Karimov"])
+        self.assertIn("Employees: Muslima Zokirjonova, Abdunosir Karimov.".encode(), provider.call_args.args[1])
 
 
 class ConcurrentAITaskTests(AITaskFixture, APITransactionTestCase):

@@ -216,6 +216,19 @@ def available_assignees(user):
     return candidates
 
 
+def assignee_names(user, limit=80):
+    """Full names to help speech recognition: the requester's own department first."""
+    people = available_assignees(user)
+    own = people.filter(department_id=user.department_id) if user.department_id else people.none()
+    names = []
+    for queryset in (own, people.exclude(pk__in=own.values("pk"))):
+        for first, last in queryset.order_by("first_name", "last_name").values_list("first_name", "last_name")[:limit]:
+            full = f"{first} {last}".strip()
+            if full and full not in names:
+                names.append(full)
+    return names[:limit]
+
+
 def exact_assignee_matches(user, name, *, candidates=None):
     candidates = list(candidates if candidates is not None else available_assignees(user))
     spellings = name_spellings(name)
@@ -626,7 +639,7 @@ def create_ai_task(*, user, request_key, text="", audio=None, audio_loader=None,
             return previous.result
         if audio_loader is not None:
             audio = audio_loader()
-        transcript = transcribe(audio) if audio is not None else text.strip()
+        transcript = transcribe(audio, names=assignee_names(user)) if audio is not None else text.strip()
         if not transcript or len(transcript) > 6000:
             raise serializers.ValidationError("The text must contain between 1 and 6000 characters.")
         intent = task_intent(transcript)
@@ -646,5 +659,7 @@ def create_ai_task(*, user, request_key, text="", audio=None, audio_loader=None,
             result = build_task_change(user, transcript, intent, from_voice=audio is not None)
         if audio is not None and result["status"] in {"needs_clarification", "needs_confirmation"}:
             result["message"] += f"\n\nI heard: {transcript[:600]}"
+        elif audio is not None:
+            result["heard"] = transcript[:600]  # shown with the result so a mishearing is visible
         AITaskRequest.objects.create(user=user, request_key=request_key, fingerprint=fingerprint, result=result)
         return result
