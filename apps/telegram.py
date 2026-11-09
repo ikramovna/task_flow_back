@@ -49,16 +49,29 @@ def task_url(task):
     return f"{base}/?{urlencode({'task': str(task_id)})}#tasks"
 
 
+def tasks_url():
+    return f"{settings.FRONTEND_URL.rstrip('/')}/#tasks"
+
+
+NOTIFICATION_ICONS = {
+    "task_assigned": "📌", "deadline_reminder": "⏰", "task_overdue": "🔴",
+    "task_completed": "✅", "new_message": "💬", "daily_digest": "☀️", "weekly_performance": "📊",
+}
+
+
 def notification_text(notification):
     task = notification.task
-    lines = [f"<b>{escape(notification.title)}</b>", "", escape(notification.body)]
+    icon = NOTIFICATION_ICONS.get(notification.notification_type, "🔔")
+    lines = [f"{icon} <b>{escape(notification.title)}</b>", "", escape(notification.body)]
     if task:
-        lines = [f"<b>{escape(notification.title)}</b>", "", f"Task: <b>{escape(task.title)}</b>"]
-        if notification.actor:
-            lines.append(f"Assigned by: {escape(notification.actor.get_full_name() or notification.actor.email)}")
-        lines.append(f"Priority: {escape(task.get_priority_display())}")
+        lines = [f"{icon} <b>{escape(notification.title)}</b>", "", f"<b>{escape(task.title)}</b>"]
+        details = []
         if task.due_date:
-            lines.append(f"Deadline: {task.due_date:%d %b %Y}")
+            details.append(f"📅 {task.due_date:%d %b}")
+        details.append(f"⚡ {escape(task.get_priority_display())}")
+        lines.append(" · ".join(details))
+        if notification.actor:
+            lines.append(f"👤 from {escape(notification.actor.get_full_name() or notification.actor.email)}")
     return "\n".join(lines)
 
 
@@ -78,7 +91,11 @@ def send_notification(notification):
     }
     if notification.task:
         payload["reply_markup"] = json.dumps({
-            "inline_keyboard": [[{"text": "Open Task", "url": task_url(notification.task)}]]
+            "inline_keyboard": [[{"text": "Open task", "url": task_url(notification.task)}]]
+        })
+    elif notification.notification_type in {"daily_digest", "weekly_performance"}:
+        payload["reply_markup"] = json.dumps({
+            "inline_keyboard": [[{"text": "Open TaskFlow", "url": tasks_url()}]]
         })
     try:
         bot_api("sendMessage", **payload)

@@ -46,7 +46,7 @@ class AITaskInputSerializer(serializers.Serializer):
 class ExtractedTaskSerializer(serializers.Serializer):
     title = serializers.CharField(max_length=220)
     description = serializers.CharField(max_length=6000, allow_blank=True)
-    assignee = serializers.CharField(max_length=254)
+    assignee = serializers.CharField(max_length=254, allow_blank=True)
     project = serializers.CharField(max_length=220, allow_null=True)
     due_date = serializers.DateField(allow_null=True)
     priority = serializers.ChoiceField(choices=("low", "medium", "high"))
@@ -246,6 +246,15 @@ def resolve_assignee(user, name, *, from_voice=False):
     return next(iter(near_matches.values())) if len(near_matches) == 1 else None
 
 
+def pending_task_data(data):
+    return {
+        "title": data["title"], "description": data["description"],
+        "assignee": data["assignee"], "project": data["project"],
+        "due_date": data["due_date"].isoformat() if data["due_date"] else None,
+        "priority": data["priority"],
+    }
+
+
 def ask_which_assignee(data, matches, transcript):
     if len(matches) > 20:
         return clarify("Several employees have that name. Please resend the complete task with a full name or email.", transcript)
@@ -256,14 +265,19 @@ def ask_which_assignee(data, matches, transcript):
     names = "\n".join(f"• {choice['name']} ({choice['email']})" for choice in choices)
     return {
         "status": "needs_clarification", "clarification_type": "assignee",
-        "message": f"Which {label}? Reply with the surname, full name, or email:\n{names}",
+        "message": f"Which {label}? Send the surname or email:\n{names}",
         "transcript": transcript, "candidates": choices,
-        "pending_task": {
-            "title": data["title"], "description": data["description"],
-            "assignee": data["assignee"], "project": data["project"],
-            "due_date": data["due_date"].isoformat() if data["due_date"] else None,
-            "priority": data["priority"],
-        },
+        "pending_task": pending_task_data(data),
+    }
+
+
+def ask_for_assignee(data, transcript):
+    """Keep the parsed task so a short follow-up reply only has to name the assignee."""
+    return {
+        "status": "needs_clarification", "clarification_type": "assignee",
+        "message": f"Who should do “{data['title'][:120]}”?\nSend a name, email, or “menga”.",
+        "transcript": transcript, "candidates": [],
+        "pending_task": pending_task_data(data),
     }
 
 
@@ -277,8 +291,9 @@ def build_task(user, transcript, *, from_voice=False):
     data = extracted.validated_data
     if data["due_date"] and data["due_date"] < timezone.localdate():
         return clarify("The deadline is in the past. Please resend the complete task with a future date, including the year.", transcript)
-    if data["assignee"] == "self" and not mentions_self(transcript):
-        return clarify("Who should do this task? Please resend the complete task with the assignee's full name or email.", transcript)
+    if not data["assignee"].strip() or (data["assignee"] == "self" and not mentions_self(transcript)):
+        data["assignee"] = ""
+        return ask_for_assignee(data, transcript)
     assignee = resolve_assignee(user, data["assignee"], from_voice=from_voice)
     if not assignee:
         exact = exact_assignee_matches(user, data["assignee"])
@@ -336,13 +351,25 @@ def continue_assignee_request(user, pending, reply):
         r"^(?:create (?:a )?task|task yarat\w*|vazifa yarat\w*)\b", normalize(reply)
     ):
         return None
+    extracted = ExtractedTaskSerializer(data=pending.result["pending_task"])
+    extracted.is_valid(raise_exception=True)
+    data = extracted.validated_data
     candidate_ids = {choice["id"] for choice in pending.result["candidates"]}
-    candidates = list(available_assignees(user).filter(pk__in=candidate_ids))
-    answer = normalize_person(reply)
-    matches = [person for person in candidates if answer in {
-        normalize_person(person.last_name), normalize_person(person.get_full_name()),
-        normalize_person(f"{person.last_name} {person.first_name}"), normalize_person(person.email),
-    }]
+    if candidate_ids:
+        candidates = list(available_assignees(user).filter(pk__in=candidate_ids))
+        answer = normalize_person(reply)
+        matches = [person for person in candidates if answer in {
+            normalize_person(person.last_name), normalize_person(person.get_full_name()),
+            normalize_person(f"{person.last_name} {person.first_name}"), normalize_person(person.email),
+        }]
+    elif mentions_self(reply):
+        # The task had no assignee yet: the reply itself names who should do it.
+        matches = [user] if user.department_id else []
+    else:
+        matches = exact_assignee_matches(user, reply)
+        if len(matches) > 1:
+            data["assignee"] = reply.strip()
+            return ask_which_assignee(data, matches, pending.result["transcript"])
     if len(matches) != 1:
         result = dict(pending.result)
         result["message"] = (
@@ -350,9 +377,6 @@ def continue_assignee_request(user, pending, reply):
             "That name still matches several employees. "
         ) + pending.result["message"]
         return result
-    extracted = ExtractedTaskSerializer(data=pending.result["pending_task"])
-    extracted.is_valid(raise_exception=True)
-    data = extracted.validated_data
     if data["due_date"] and data["due_date"] < timezone.localdate():
         return clarify("The deadline is now in the past. Please send a complete corrected task request.", reply)
     result = finish_task(user, data, matches[0], pending.result["transcript"])

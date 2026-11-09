@@ -249,6 +249,8 @@ class UserPreference(TimeStampedModel):
     task_assigned = models.BooleanField(default=True)
     deadline_reminder = models.BooleanField(default=False)
     task_overdue = models.BooleanField(default=True)
+    daily_digest = models.BooleanField(default=True)
+    weekly_performance = models.BooleanField(default=True)
     theme = models.CharField(max_length=10, choices=Theme.choices, default=Theme.LIGHT)
     language = models.CharField(max_length=12, default="en-US")
     timezone = models.CharField(max_length=64, default="Asia/Tashkent")
@@ -304,6 +306,8 @@ class Notification(TimeStampedModel):
         TASK_OVERDUE = "task_overdue", "Task Overdue"
         TASK_COMPLETED = "task_completed", "Task Completed"
         NEW_MESSAGE = "new_message", "New Message"
+        DAILY_DIGEST = "daily_digest", "Daily Digest"
+        WEEKLY_PERFORMANCE = "weekly_performance", "Weekly Performance"
 
     recipient = models.ForeignKey(User, on_delete=models.CASCADE, related_name="notifications")
     actor = models.ForeignKey(

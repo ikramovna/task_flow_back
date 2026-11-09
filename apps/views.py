@@ -1703,7 +1703,7 @@ class TelegramWebhookView(APIView):
             integration.link_token = None
             integration.link_token_expires_at = None
             integration.save()
-            send_menu(chat_id, "✅ Telegram successfully connected to TaskFlow.")
+            send_menu(chat_id, "✅ Telegram connected to TaskFlow.")
         else:
             try:
                 handle_task_message(message)

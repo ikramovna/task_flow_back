@@ -72,11 +72,50 @@ class AITaskTests(AITaskFixture, APITestCase):
         self.assertEqual(response.data["status"], "needs_clarification")
         self.assertFalse(Task.objects.exists())
 
-    def test_self_assignee_without_self_reference_asks_who(self):
+    def ask_without_assignee(self, assignee="self"):
         self.payload["text"] = "mept update\n\ndue today"
-        self.parsed["assignee"] = "self"
+        self.parsed["assignee"] = assignee
         response = self.post()
         self.assertEqual(response.data["status"], "needs_clarification", response.data)
+        self.assertEqual(response.data["clarification_type"], "assignee")
+        self.assertFalse(Task.objects.exists())
+        return response
+
+    def reply(self, text):
+        return self.post({"request_id": str(uuid.uuid4()), "text": text})
+
+    def test_self_assignee_without_self_reference_asks_who(self):
+        self.ask_without_assignee("self")
+
+    def test_missing_assignee_reply_with_name_creates_saved_task(self):
+        self.ask_without_assignee("")
+        response = self.reply("Muslima")
+        self.assertEqual(response.status_code, 201, response.data)
+        task = Task.objects.get()
+        self.assertEqual(task.main_assignee, self.assignee)
+        self.assertEqual(task.title, self.parsed["title"])
+        self.extractor.assert_called_once()
+
+    def test_missing_assignee_reply_menga_assigns_requester(self):
+        self.ask_without_assignee("")
+        response = self.reply("menga")
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(Task.objects.get().main_assignee, self.user)
+
+    def test_missing_assignee_reply_with_shared_name_asks_which(self):
+        User.objects.create_user(username="other", email="other@example.com", first_name="Muslima",
+                                 last_name="Karimova", department=self.department)
+        self.ask_without_assignee("")
+        response = self.reply("Muslima")
+        self.assertEqual(len(response.data["candidates"]), 2, response.data)
+        response = self.reply("Karimova")
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(Task.objects.get().main_assignee.last_name, "Karimova")
+
+    def test_missing_assignee_unknown_reply_keeps_asking(self):
+        self.ask_without_assignee("")
+        response = self.reply("Nobody")
+        self.assertEqual(response.data["clarification_type"], "assignee", response.data)
         self.assertFalse(Task.objects.exists())
 
     def test_explicit_self_assignment_is_allowed(self):
@@ -382,7 +421,7 @@ class TelegramAITaskTests(AITaskFixture, APITestCase):
         self.message["message_id"] = 2
         self.message["text"] = "Karimova"
         self.webhook()
-        self.assertIn("TASK CREATED", self.bot.call_args.kwargs["text"])
+        self.assertIn("Task created", self.bot.call_args.kwargs["text"])
         self.assertEqual(Task.objects.get().main_assignee, other)
         self.extractor.assert_called_once()
 
@@ -396,7 +435,7 @@ class TelegramAITaskTests(AITaskFixture, APITestCase):
         self.message["text"] = "/start"
         self.webhook()
         self.assertIn("inline_keyboard", json.loads(self.bot.call_args.kwargs["reply_markup"]))
-        self.assertIn("Create task", self.bot.call_args.kwargs["reply_markup"])
+        self.assertIn("Text task", self.bot.call_args.kwargs["reply_markup"])
         self.assertTrue(json.loads(self.bot.call_args_list[0].kwargs["reply_markup"])["remove_keyboard"])
         self.extractor.assert_not_called()
 
@@ -405,7 +444,7 @@ class TelegramAITaskTests(AITaskFixture, APITestCase):
         self.webhook()
         self.bot.assert_called_once()
         self.assertEqual(self.bot.call_args.args[0], "sendMessage")
-        self.assertIn("TASKFLOW", self.bot.call_args.kwargs["text"])
+        self.assertIn("Tiko", self.bot.call_args.kwargs["text"])
 
     def test_inline_callback_shows_create_screen_without_creating_task(self):
         callback = {"id": "cb1", "from": {"id": 101}, "message": self.message, "data": "task:create"}
@@ -415,7 +454,7 @@ class TelegramAITaskTests(AITaskFixture, APITestCase):
         self.bot.assert_called_once_with("answerCallbackQuery", callback_query_id="cb1", timeout=3)
         self.assertEqual(response.data["method"], "sendMessage")
         self.assertEqual(response.data["parse_mode"], "HTML")
-        self.assertIn("CREATE A TASK", response.data["text"])
+        self.assertIn("New task", response.data["text"])
         self.assertEqual(response["Content-Type"], "application/json")
         self.assertIn("inline_keyboard", response.data["reply_markup"])
         self.extractor.assert_not_called()
@@ -442,9 +481,9 @@ class TelegramAITaskTests(AITaskFixture, APITestCase):
         self.assertEqual(json.loads(bot.call_args_list[2].kwargs["menu_button"]), {"type": "commands"})
 
     def test_all_menu_screens_navigate_without_ai(self):
-        for screen, heading in [("menu", "TASKFLOW"), ("voice", "CREATE WITH YOUR VOICE"),
-                                ("template", "TASK TEMPLATE"), ("example", "EXAMPLE TASK"),
-                                ("help", "HOW TIKO WORKS")]:
+        for screen, heading in [("menu", "Tiko"), ("voice", "Voice task"),
+                                ("template", "Template"), ("example", "Example"),
+                                ("help", "Help")]:
             with self.subTest(screen=screen):
                 callback = {"id": "cb", "from": {"id": 101}, "message": self.message,
                             "data": f"task:{screen}"}
@@ -459,15 +498,15 @@ class TelegramAITaskTests(AITaskFixture, APITestCase):
     def test_template_command_and_repeated_navigation(self):
         self.message["text"] = "/template"
         self.webhook()
-        self.assertIn("<pre>Create a task:", self.bot.call_args.kwargs["text"])
-        self.assertIn("[Full name or email]", self.bot.call_args.kwargs["text"])
+        self.assertIn("<pre>Task:", self.bot.call_args.kwargs["text"])
+        self.assertIn("Assign to:", self.bot.call_args.kwargs["text"])
         callback = {"id": "cb", "from": {"id": 101}, "message": self.message, "data": "task:template"}
         for _ in range(2):
             response = self.client.post("/api/v1/telegram/webhook/", {"callback_query": callback},
                                         format="json", HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="secret")
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.data["method"], "sendMessage")
-            self.assertIn("TASK TEMPLATE", response.data["text"])
+            self.assertIn("Template", response.data["text"])
         self.assertEqual([call.args[0] for call in self.bot.call_args_list[-2:]],
                          ["answerCallbackQuery", "answerCallbackQuery"])
         self.extractor.assert_not_called()
@@ -482,13 +521,13 @@ class TelegramAITaskTests(AITaskFixture, APITestCase):
                                     format="json", HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="secret")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.data["method"], "sendMessage")
-        self.assertIn("EXAMPLE TASK", response.data["text"])
+        self.assertIn("Example", response.data["text"])
 
     def test_task_confirmation_escapes_html(self):
         self.parsed["title"] = "Fix <login> & signup"
         self.webhook()
         self.assertIn("Fix &lt;login&gt; &amp; signup", self.bot.call_args.kwargs["text"])
-        self.assertIn("TASK CREATED", self.bot.call_args.kwargs["text"])
+        self.assertIn("Task created", self.bot.call_args.kwargs["text"])
         markup = json.loads(self.bot.call_args.kwargs["reply_markup"])
         self.assertEqual(markup["inline_keyboard"][0][0]["url"],
                          task_url(str(Task.objects.get().pk)))
@@ -587,7 +626,8 @@ class AIProviderTests(SimpleTestCase):
         self.assertEqual(args[0], "audio/transcriptions")
         self.assertIn(b'filename="voice.ogg"', args[1])
         self.assertIn(b'name="prompt"', args[1])
-        self.assertIn("Xodimning ism va familiyasini".encode(), args[1])
+        self.assertIn(b"Keep employee names as said", args[1])
+        self.assertIn("завтра".encode(), args[1])
         self.assertIn(b"sample audio", args[1])
 
 

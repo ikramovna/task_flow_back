@@ -51,11 +51,12 @@ def transcribe(audio):
         f'--{boundary}\r\nContent-Disposition: form-data; name="model"\r\n\r\n'
         f'{settings.OPENAI_TRANSCRIPTION_MODEL}\r\n'
         f'--{boundary}\r\nContent-Disposition: form-data; name="prompt"\r\n\r\n'
-        'TaskFlow vazifasi haqidagi nutq o‘zbek, rus yoki ingliz tilida bo‘lishi mumkin. '
-        'Xodimning ism va familiyasini '
-        'aytilganidek yozing, boshqa tilga tarjima qilmang. Ismga -ga yoki -ni '
-        'qo‘shimchasi qo‘shilgan bo‘lishi mumkin. Atamalar: vazifa, xodim, '
-        'mas’ul, muddat, sentyabr, vebsayt, login.\r\n'
+        'A TaskFlow task request in Uzbek, Russian or English, sometimes mixed. '
+        'Transcribe in the language spoken; do not translate. Keep employee names as said. '
+        'Uzbek: vazifa, task yarat, mas’ul, muddat, ertaga, indinga, dushanba, juma, '
+        'Muslimaga, Aliga, shoshilinch. '
+        'Russian: задача, создай задачу, срок, завтра, послезавтра, до пятницы, срочно. '
+        'English: task, assign to, deadline, tomorrow, by Friday, urgent.\r\n'
         f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="voice{extension}"\r\n'
         'Content-Type: application/octet-stream\r\n\r\n'
     ).encode() + audio.read(MAX_AUDIO_BYTES + 1) + f"\r\n--{boundary}--\r\n".encode()
@@ -91,13 +92,17 @@ def extract_task(text):
                 "reference: return it as assignee and let the application ask which employee if necessary. "
                 "Use assignee='self' only when the requester explicitly assigns the task to themselves "
                 "(for example 'menga', 'o'zim qilaman', 'assign to me', 'мне'). Never use 'self' as a default: "
-                "if no assignee is mentioned, set assignee='' and ask for it in clarification. "
+                "if no assignee is mentioned, set assignee=''. When the assignee is the only missing detail, "
+                "keep clarification=null: the application asks for the assignee and keeps the other fields. "
                 "project=null unless an explicit project is named. priority=medium unless specified. "
                 "due_date is YYYY-MM-DD or null if absent. For a date without year use its next occurrence including today. "
                 "The end of a named month (for example 'sentyabr oxiri', 'end of September', "
                 "'конец сентября') means its last calendar day; if no year is given use its next occurrence. "
-                "For relative dates use today in Asia/Tashkent: " + timezone.localdate().isoformat() + ". "
-                "If not a task creation request, multiple tasks, missing task/assignee, or ambiguous date, "
+                "For relative dates use today in Asia/Tashkent: " + timezone.localdate().strftime("%Y-%m-%d (%A)") + ". "
+                "Relative dates: bugun/сегодня=today, ertaga/завтра=tomorrow, indinga/послезавтра=+2 days; "
+                "a weekday (dushanba..yakshanba, понедельник..воскресенье) means its next occurrence including today. "
+                "Priority words: shoshilinch/muhim/срочно/urgent=high; shoshilmasdan/не срочно=low. "
+                "If not a task creation request, multiple tasks, missing task, or ambiguous date, "
                 "return clarification in English asking for a complete corrected request; otherwise clarification=null."
             )},
             {"role": "user", "content": text},
@@ -146,7 +151,8 @@ def extract_task_change(text):
                 "name suffixes such as Zokirjonovaga -> Zokirjonova. "
                 "due_date is YYYY-MM-DD; for yearless dates use the next occurrence including today. "
                 "End of a named month means its last calendar day. Today in Asia/Tashkent is "
-                + timezone.localdate().isoformat() + ". "
+                + timezone.localdate().strftime("%Y-%m-%d (%A)") + ". "
+                "Weekdays (juma, пятница, Friday) mean their next occurrence including today. "
                 "If an action or requested change is unclear, set clarification to a concise English "
                 "question; otherwise clarification=null. For delete, all change fields are null."
             )},
