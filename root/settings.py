@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 """
 
 import os
+import sys
 from datetime import timedelta
 from pathlib import Path
 
@@ -38,8 +39,15 @@ TELEGRAM_SUPPORT_CHAT_ID = os.getenv('TELEGRAM_SUPPORT_CHAT_ID', '')
 TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
 TELEGRAM_BOT_USERNAME = os.getenv('TELEGRAM_BOT_USERNAME', '')
 TELEGRAM_WEBHOOK_SECRET = os.getenv('TELEGRAM_WEBHOOK_SECRET', '')
+# Push Telegram notifications from a small thread pool so bot replies never wait for them.
+# Tests send synchronously so they can assert on the calls.
+TELEGRAM_NOTIFY_IN_BACKGROUND = (
+    os.getenv('TELEGRAM_NOTIFY_IN_BACKGROUND', 'True').lower() == 'true' and sys.argv[1:2] != ['test']
+)
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY', '')
 OPENAI_TASK_MODEL = os.getenv('OPENAI_TASK_MODEL', 'gpt-5.4-mini')
+# Task extraction is simple: low reasoning keeps replies fast. Empty disables the parameter.
+OPENAI_REASONING_EFFORT = os.getenv('OPENAI_REASONING_EFFORT', 'low')
 OPENAI_TRANSCRIPTION_MODEL = os.getenv('OPENAI_TRANSCRIPTION_MODEL', 'gpt-4o-mini-transcribe')
 
 

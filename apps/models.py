@@ -247,7 +247,7 @@ class UserPreference(TimeStampedModel):
     team_messages = models.BooleanField(default=True)
     weekly_reports = models.BooleanField(default=False)
     task_assigned = models.BooleanField(default=True)
-    deadline_reminder = models.BooleanField(default=False)
+    deadline_reminder = models.BooleanField(default=True)
     task_overdue = models.BooleanField(default=True)
     daily_digest = models.BooleanField(default=True)
     weekly_performance = models.BooleanField(default=True)

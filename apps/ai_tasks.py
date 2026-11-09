@@ -72,13 +72,27 @@ TASK_REFERENCE = re.compile(
     r"yaratgan\w*|created|shu|uni|buni|it|this|that)\b"
 )
 DELETE_CONFIRMATION = re.compile(r"^confirm delete ([0-9a-f]{12})$", re.IGNORECASE)
+ALL_CONFIRMATION = re.compile(r"^confirm all ([0-9a-f]{12})$", re.IGNORECASE)
+ALL_REFERENCE = re.compile(
+    r"(?<!\w)(all|everyone|everybody|whole team|hamma\w*|barcha\w*|всем|все|всех|каждому)(?!\w)", re.IGNORECASE
+)
+ALL_ASSIGNEE_NAMES = {"all", "all employees", "all employee", "all staff", "everyone", "everybody",
+                      "hammaga", "barchaga", "barcha xodimlar", "всем", "все сотрудники"}
+MAX_ALL_ASSIGNEES = 200
+INSTRUCTION_WORDS = re.compile(r"(?<!\w)(your|yours|sizning|sizlar\w*|ваш\w*|сво\w*)(?!\w)")
 
 
 def task_intent(text):
     normalized = normalize(text)
     if DELETE_CONFIRMATION.fullmatch(normalized):
         return "confirm_delete"
+    if ALL_CONFIRMATION.fullmatch(normalized):
+        return "confirm_all"
     if re.match(r"^(?:create (?:a )?task|task yarat\w*|vazifa yarat\w*|созда\w* задач\w*)\b", normalized):
+        return "create"
+    # "Please update YOUR task status" / "hammaga ..." instructs other people: it is a new task,
+    # not an edit of an existing one, even though it contains "update" and "task".
+    if INSTRUCTION_WORDS.search(normalized) or ALL_REFERENCE.search(normalized):
         return "create"
     has_target = bool(TASK_REFERENCE.search(normalized))
     delete = has_target and bool(DELETE_WORDS.search(normalized))
@@ -233,6 +247,95 @@ def mentions_self(text):
     return bool(SELF_REFERENCE.search(text or ""))
 
 
+def is_all_assignee(name, transcript):
+    """'All employees' is honoured only when the request itself says so."""
+    return normalize(name) in ALL_ASSIGNEE_NAMES and bool(ALL_REFERENCE.search(transcript or ""))
+
+
+def is_task_manager(user):
+    return user.is_active and (user.is_superuser or user.role in PRIVILEGED_TASK_ROLES)
+
+
+def team_members(user):
+    """Active staff of the requester's own departments (primary + attached), excluding the requester."""
+    department_ids = set(user.accessible_departments.values_list("pk", flat=True))
+    if user.department_id:
+        department_ids.add(user.department_id)
+    return (User.objects.filter(is_active=True, department_id__in=department_ids, department__is_active=True)
+            .exclude(pk=user.pk).select_related("department")
+            .order_by("department__name", "first_name", "last_name", "email"))
+
+
+def ask_assign_all(user, data, transcript):
+    if not is_task_manager(user):
+        return clarify("Only an Owner, Admin, or Manager can assign a task to all employees.", transcript)
+    members = list(team_members(user))
+    if not members:
+        return clarify("No active employees were found in your departments.", transcript)
+    if len(members) > MAX_ALL_ASSIGNEES:
+        return clarify(f"That is more than {MAX_ALL_ASSIGNEES} employees. Please assign by name instead.", transcript)
+    departments = sorted({member.department.name for member in members})
+    code = secrets.token_hex(6).upper()
+    return {
+        "status": "needs_confirmation", "action": "assign_all", "confirmation_code": code,
+        "transcript": transcript, "pending_task": pending_task_data(data),
+        "member_ids": [str(member.pk) for member in members], "departments": departments,
+        "message": f"Send “{data['title'][:120]}” to {len(members)} employees ({', '.join(departments)})?\n"
+                   f"Each gets their own task. Send CONFIRM ALL {code} within 10 minutes to confirm.",
+    }
+
+
+@transaction.atomic
+def confirm_ai_assign_all(user, code):
+    pending = AITaskRequest.objects.select_for_update().filter(
+        user=user, result__status="needs_confirmation", result__action="assign_all",
+        result__confirmation_code=code.upper(), created_at__gte=timezone.now() - timedelta(minutes=10),
+    ).order_by("-created_at").first()
+    if not pending:
+        return clarify("That confirmation expired or was already used. Send the task again.", "")
+    if not is_task_manager(user):
+        raise PermissionDenied("Only an Owner, Admin, or Manager can assign a task to all employees.")
+    extracted = ExtractedTaskSerializer(data=pending.result["pending_task"])
+    extracted.is_valid(raise_exception=True)
+    data = extracted.validated_data
+    if data["due_date"] and data["due_date"] < timezone.localdate():
+        return clarify("The deadline is now in the past. Please send the task again.", "")
+    # Re-check membership: people who left the department since the question are skipped.
+    members = list(team_members(user).filter(pk__in=pending.result["member_ids"]))
+    if not members:
+        return clarify("No active employees were found in your departments.", "")
+    projects = {}
+    tasks = []
+    for member in members:
+        if data["project"] and member.department_id not in projects:
+            matches = [item for item in Project.objects.filter(department=member.department_id)
+                       .exclude(status=Project.Status.ARCHIVED) if normalize(item.name) == normalize(data["project"])]
+            projects[member.department_id] = matches[0] if len(matches) == 1 else None
+        project = projects.get(member.department_id)
+        serializer = TaskSerializer(data={
+            "title": data["title"], "description": data["description"], "assignees": [member.pk],
+            "due_date": data["due_date"], "priority": data["priority"],
+            "project": str(project.pk) if project else None,
+        }, context={"request": SimpleNamespace(user=user)})
+        serializer.is_valid(raise_exception=True)
+        tasks.append(save_task(serializer, user))
+    first = tasks[0]
+    result = {
+        "status": "created", "action": "assign_all", "count": len(tasks),
+        "transcript": pending.result["transcript"], "departments": pending.result["departments"],
+        "message": f"Task sent to {len(tasks)} employees: {first.title}\nDeadline: {first.due_date or 'Not specified'}",
+        "task": {
+            "id": str(first.pk), "title": first.title, "description": first.description,
+            "assignee_name": f"{len(tasks)} employees", "due_date": first.due_date.isoformat() if first.due_date else None,
+            "priority": first.priority, "status": first.status,
+        },
+        "task_ids": [str(task.pk) for task in tasks],
+    }
+    pending.result = result
+    pending.save(update_fields=["result", "updated_at"])
+    return result
+
+
 def resolve_assignee(user, name, *, from_voice=False):
     if name == "self":
         return user if user.department_id else None
@@ -291,6 +394,8 @@ def build_task(user, transcript, *, from_voice=False):
     data = extracted.validated_data
     if data["due_date"] and data["due_date"] < timezone.localdate():
         return clarify("The deadline is in the past. Please resend the complete task with a future date, including the year.", transcript)
+    if is_all_assignee(data["assignee"], transcript):
+        return ask_assign_all(user, data, transcript)
     if not data["assignee"].strip() or (data["assignee"] == "self" and not mentions_self(transcript)):
         data["assignee"] = ""
         return ask_for_assignee(data, transcript)
@@ -466,7 +571,7 @@ def build_task_change(user, transcript, intent, *, from_voice=False):
 @transaction.atomic
 def confirm_ai_delete(user, code):
     pending = AITaskRequest.objects.select_for_update().filter(
-        user=user, result__status="needs_confirmation", result__confirmation_code=code.upper(),
+        user=user, result__status="needs_confirmation", result__action="delete", result__confirmation_code=code.upper(),
         created_at__gte=timezone.now() - timedelta(minutes=10),
     ).order_by("-created_at").first()
     if not pending:
@@ -515,6 +620,8 @@ def create_ai_task(*, user, request_key, text="", audio=None, audio_loader=None,
         if intent == "confirm_delete":
             code = DELETE_CONFIRMATION.fullmatch(normalize(transcript)).group(1)
             result = confirm_ai_delete(user, code)
+        elif intent == "confirm_all":
+            result = confirm_ai_assign_all(user, ALL_CONFIRMATION.fullmatch(normalize(transcript)).group(1))
         elif intent == "ambiguous":
             result = clarify("Please request either an edit or a deletion, one at a time.", transcript)
         elif intent == "create":

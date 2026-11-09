@@ -1,7 +1,14 @@
-from django.db import transaction
+import logging
+from concurrent.futures import ThreadPoolExecutor
+
+from django.conf import settings
+from django.db import connection, transaction
 from django.utils import timezone
 
 from .models import Notification, Task, UserPreference
+
+logger = logging.getLogger(__name__)
+_telegram_pool = None
 
 
 def _preference(user):
@@ -25,17 +32,43 @@ def create_notification(*, recipient, notification_type, title, body="", actor=N
             recipient=recipient, event_key=event_key, defaults=values
         )
         if was_created:
-            transaction.on_commit(lambda: _send_telegram(notification.pk))
+            transaction.on_commit(lambda: _dispatch_telegram(notification.pk))
         return notification
     notification = Notification.objects.create(recipient=recipient, **values)
-    transaction.on_commit(lambda: _send_telegram(notification.pk))
+    transaction.on_commit(lambda: _dispatch_telegram(notification.pk))
     return notification
+
+
+def _dispatch_telegram(notification_id):
+    """Each Telegram call can take seconds; never make the bot reply or a web request wait for it."""
+    global _telegram_pool
+    if not settings.TELEGRAM_NOTIFY_IN_BACKGROUND:
+        _send_telegram(notification_id)
+        return
+    if _telegram_pool is None:
+        _telegram_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="telegram-notify")
+    _telegram_pool.submit(_send_telegram_in_thread, notification_id)
+
+
+def _send_telegram_in_thread(notification_id):
+    try:
+        _send_telegram(notification_id)
+    except Exception:
+        logger.exception("Could not push notification %s to Telegram", notification_id)
+    finally:
+        connection.close()  # the worker thread's own connection
+
+
+# Chat messages stay in the web app: pushing every message would bury task notifications.
+TELEGRAM_SKIPPED_TYPES = {Notification.Type.NEW_MESSAGE}
 
 
 def _send_telegram(notification_id):
     from .telegram import send_notification
 
     notification = Notification.objects.select_related("recipient", "actor", "task").get(pk=notification_id)
+    if notification.notification_type in TELEGRAM_SKIPPED_TYPES:
+        return
     send_notification(notification)
 
 
@@ -90,10 +123,11 @@ def generate_deadline_notifications(today=None):
     ).select_related("created_by").prefetch_related("assignees")
     for task in tasks:
         days = (task.due_date - today).days
-        if days in (1, 3):
+        # Only the day before: the morning "Today's plan" already lists upcoming tasks.
+        if days == 1:
             notification_type = Notification.Type.DEADLINE_REMINDER
             preference_name = "deadline_reminder"
-            title = f"Task deadline in {days} day" + ("s" if days != 1 else "")
+            title = "Deadline tomorrow"
             event_key = f"task:{task.pk}:deadline:{task.due_date}:d{days}"
         elif days < 0:
             notification_type = Notification.Type.TASK_OVERDUE

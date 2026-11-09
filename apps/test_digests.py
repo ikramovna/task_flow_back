@@ -103,8 +103,44 @@ class DigestCommandTests(DigestFixture, TestCase):
         self.assertTrue({"daily_digest", "weekly_performance"} <= types)
 
 
+class NotificationPolicyTests(DigestFixture, TestCase):
+    def test_deadline_reminder_is_on_by_default_and_only_day_before(self):
+        from .notifications import generate_deadline_notifications
+        self.task("Tomorrow", TODAY + timedelta(days=1))
+        self.task("In three days", TODAY + timedelta(days=3))
+        self.assertEqual(generate_deadline_notifications(TODAY), 1)
+        self.assertEqual(Notification.objects.get(notification_type="deadline_reminder").title, "Deadline tomorrow")
+
+    def test_chat_messages_are_not_pushed_to_telegram(self):
+        from .notifications import create_notification
+        TelegramIntegration.objects.create(user=self.user, telegram_chat_id=5, telegram_user_id=5, is_connected=True)
+        with self.captureOnCommitCallbacks(execute=True):
+            create_notification(recipient=self.user, notification_type="new_message", title="New message", body="hi")
+            create_notification(recipient=self.user, notification_type="task_overdue", title="Task overdue")
+        self.assertEqual(Notification.objects.filter(recipient=self.user).count(), 2)
+        self.telegram.assert_called_once()
+        self.assertIn("Task overdue", self.telegram.call_args.kwargs["text"])
+
+
 @override_settings(TELEGRAM_WEBHOOK_SECRET="secret")
 class TelegramTodayTests(DigestFixture, APITestCase):
+    def test_all_employees_confirm_button_creates_tasks(self):
+        from .models import AITaskRequest
+        TelegramIntegration.objects.create(user=self.boss, telegram_chat_id=8, telegram_user_id=8, is_connected=True)
+        AITaskRequest.objects.create(user=self.boss, request_key="telegram:8:1", fingerprint="x", result={
+            "status": "needs_confirmation", "action": "assign_all", "confirmation_code": "ABCDEF123456",
+            "transcript": "all", "departments": ["IT"], "member_ids": [str(self.user.pk)],
+            "pending_task": {"title": "Update statuses", "description": "", "assignee": "all", "project": None,
+                             "due_date": None, "priority": "medium"},
+        })
+        message = {"message_id": 2, "chat": {"id": 8, "type": "private"}, "from": {"id": 8}}
+        callback = {"id": "cb", "from": {"id": 8}, "message": message, "data": "task:all:ABCDEF123456"}
+        with patch("apps.telegram_tasks.bot_api"):
+            response = self.client.post("/api/v1/telegram/webhook/", {"callback_query": callback},
+                                        format="json", HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="secret")
+        self.assertIn("👥 1 employees", response.data["text"])
+        self.assertEqual(Task.objects.get().main_assignee, self.user)
+
     def test_today_button_and_command(self):
         TelegramIntegration.objects.create(user=self.user, telegram_chat_id=7, telegram_user_id=7, is_connected=True)
         self.task("Fix login", timezone.localdate())
@@ -114,6 +150,6 @@ class TelegramTodayTests(DigestFixture, APITestCase):
             response = self.client.post("/api/v1/telegram/webhook/", {"callback_query": callback},
                                         format="json", HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="secret")
             self.assertIn("Fix login", response.data["text"])
-            self.client.post("/api/v1/telegram/webhook/", {"message": {**message, "text": "/today"}},
-                             format="json", HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="secret")
-            self.assertIn("Fix login", bot.call_args.kwargs["text"])
+            response = self.client.post("/api/v1/telegram/webhook/", {"message": {**message, "text": "/today"}},
+                                        format="json", HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="secret")
+            self.assertIn("Fix login", response.data["text"])

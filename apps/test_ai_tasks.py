@@ -44,6 +44,9 @@ class TaskIntentTests(SimpleTestCase):
         self.assertEqual(task_intent("Fix website login page"), "create")
         self.assertEqual(task_intent("Remove old icons from website"), "create")
         self.assertEqual(task_intent("Create a task: update task list dashboard"), "create")
+        self.assertEqual(task_intent("Please update your Taskflow task status on time. All employees"), "create")
+        self.assertEqual(task_intent("Обновите свои задачи до пятницы"), "create")
+        self.assertEqual(task_intent("Edit task: set priority high"), "update")
 
 
 class AITaskTests(AITaskFixture, APITestCase):
@@ -124,6 +127,52 @@ class AITaskTests(AITaskFixture, APITestCase):
         response = self.post()
         self.assertEqual(response.status_code, 201, response.data)
         self.assertEqual(Task.objects.get().main_assignee, self.user)
+
+    def ask_all(self):
+        self.payload["text"] = "1. Update your Taskflow task status on time.\n2. All employee's\n3. Till 11.11.2027."
+        self.parsed["assignee"] = "All employee's"
+        return self.post()
+
+    def test_all_employees_asks_then_creates_one_task_each_in_own_departments(self):
+        sales = Department.objects.create(name="Sales", code="sales")
+        other = Department.objects.create(name="Other", code="other")
+        self.user.accessible_departments.add(sales)
+        seller = User.objects.create_user(username="s", email="s@example.com", department=sales)
+        outsider = User.objects.create_user(username="o", email="o@example.com", department=other)
+        User.objects.create_user(username="gone", email="g@example.com", department=self.department, is_active=False)
+
+        asked = self.ask_all()
+        self.assertEqual(asked.data["status"], "needs_confirmation", asked.data)
+        self.assertEqual(asked.data["action"], "assign_all")
+        self.assertIn("2 employees (IT, Sales)", asked.data["message"])
+        self.assertFalse(Task.objects.exists())
+
+        done = self.reply(f"CONFIRM ALL {asked.data['confirmation_code']}")
+        self.assertEqual(done.status_code, 201, done.data)
+        self.assertEqual(done.data["count"], 2)
+        owners = {task.main_assignee for task in Task.objects.all()}
+        self.assertEqual(owners, {self.assignee, seller})
+        self.assertNotIn(outsider, owners)
+        self.assertNotIn(self.user, owners)
+        self.assertEqual(Notification.objects.filter(notification_type="task_assigned").count(), 2)
+        # The code cannot be reused.
+        self.assertEqual(self.reply(f"CONFIRM ALL {asked.data['confirmation_code']}").data["status"], "needs_clarification")
+        self.assertEqual(Task.objects.count(), 2)
+
+    def test_member_cannot_assign_to_all(self):
+        self.user.role = "member"
+        self.user.save(update_fields=["role"])
+        response = self.ask_all()
+        self.assertEqual(response.data["status"], "needs_clarification")
+        self.assertIn("Owner, Admin, or Manager", response.data["message"])
+        self.assertFalse(Task.objects.exists())
+
+    def test_all_without_all_words_in_request_is_not_trusted(self):
+        self.payload["text"] = "Fix the website by Friday"
+        self.parsed["assignee"] = "all"
+        response = self.post()
+        self.assertNotEqual(response.data.get("action"), "assign_all")
+        self.assertFalse(Task.objects.exists())
 
     def test_first_name_creates_task_when_only_one_employee_matches(self):
         User.objects.create_user(username="surname-match", email="surname@example.com",
@@ -411,19 +460,29 @@ class TelegramAITaskTests(AITaskFixture, APITestCase):
     def webhook(self, secret="secret"):
         return self.client.post("/api/v1/telegram/webhook/", {"message": self.message}, format="json", HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN=secret)
 
+    def callback(self, data, sender=101):
+        callback = {"id": "cb", "from": {"id": sender}, "message": self.message, "data": data}
+        return self.client.post("/api/v1/telegram/webhook/", {"callback_query": callback},
+                                format="json", HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="secret")
+
     def test_bot_asks_which_first_name_and_accepts_surname_reply(self):
         other = User.objects.create_user(username="second", email="second@example.com",
                                          first_name="Muslima", last_name="Karimova", department=self.department)
         self.parsed["assignee"] = "Muslima"
-        self.webhook()
-        self.assertIn("Which Muslima?", self.bot.call_args.kwargs["text"])
+        self.assertIn("Which Muslima?", self.webhook().data["text"])
         self.assertFalse(Task.objects.exists())
         self.message["message_id"] = 2
         self.message["text"] = "Karimova"
-        self.webhook()
-        self.assertIn("Task created", self.bot.call_args.kwargs["text"])
+        self.assertIn("✅", self.webhook().data["text"])
         self.assertEqual(Task.objects.get().main_assignee, other)
         self.extractor.assert_called_once()
+
+    def test_reply_is_returned_in_webhook_response_without_extra_api_call(self):
+        response = self.webhook()
+        self.assertEqual(response.data["method"], "sendMessage")
+        self.assertEqual(response.data["chat_id"], 101)
+        self.bot.assert_not_called()
+        self.assertEqual(Task.objects.count(), 1)
 
     def test_telegram_text_and_replayed_update_create_one_task(self):
         self.assertEqual(self.webhook().status_code, 200)
@@ -431,39 +490,36 @@ class TelegramAITaskTests(AITaskFixture, APITestCase):
         self.assertEqual(Task.objects.count(), 1)
         self.extractor.assert_called_once()
 
-    def test_start_shows_create_button(self):
+    def test_start_shows_short_menu_with_two_buttons(self):
         self.message["text"] = "/start"
-        self.webhook()
-        self.assertIn("inline_keyboard", json.loads(self.bot.call_args.kwargs["reply_markup"]))
-        self.assertIn("Text task", self.bot.call_args.kwargs["reply_markup"])
-        self.assertTrue(json.loads(self.bot.call_args_list[0].kwargs["reply_markup"])["remove_keyboard"])
+        response = self.webhook()
+        self.assertIn("who · what · when", response.data["text"])
+        buttons = [button["text"] for row in response.data["reply_markup"]["inline_keyboard"] for button in row]
+        self.assertEqual(buttons, ["📅 Today", "💡 Example"])
+        self.bot.assert_not_called()
         self.extractor.assert_not_called()
 
-    def test_menu_command_uses_one_telegram_request(self):
-        self.message["text"] = "/menu"
-        self.webhook()
-        self.bot.assert_called_once()
-        self.assertEqual(self.bot.call_args.args[0], "sendMessage")
-        self.assertIn("Tiko", self.bot.call_args.kwargs["text"])
-
-    def test_inline_callback_shows_create_screen_without_creating_task(self):
-        callback = {"id": "cb1", "from": {"id": 101}, "message": self.message, "data": "task:create"}
-        response = self.client.post("/api/v1/telegram/webhook/", {"callback_query": callback},
-                                    format="json", HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="secret")
-        self.assertEqual(response.status_code, 200)
-        self.bot.assert_called_once_with("answerCallbackQuery", callback_query_id="cb1", timeout=3)
-        self.assertEqual(response.data["method"], "sendMessage")
-        self.assertEqual(response.data["parse_mode"], "HTML")
-        self.assertIn("New task", response.data["text"])
-        self.assertEqual(response["Content-Type"], "application/json")
-        self.assertIn("inline_keyboard", response.data["reply_markup"])
+    def test_old_buttons_and_commands_still_open_the_menu(self):
+        for data in ("task:create", "task:voice", "task:template", "task:menu"):
+            with self.subTest(data=data):
+                response = self.callback(data)
+                self.assertEqual(response.data["method"], "sendMessage")
+                self.assertIn("Tiko", response.data["text"])
+        for command in ("/menu", "/create", "/template", "/voice"):
+            with self.subTest(command=command):
+                self.message["text"] = command
+                self.assertIn("Tiko", self.webhook().data["text"])
         self.extractor.assert_not_called()
         self.assertFalse(Task.objects.exists())
 
+    def test_example_and_help_screens(self):
+        self.assertIn("Examples", self.callback("task:example").data["text"])
+        self.message["text"] = "/help"
+        self.assertIn("Everyone", self.webhook().data["text"])
+        self.extractor.assert_not_called()
+
     def test_inline_callback_rejects_unlinked_sender(self):
-        callback = {"id": "cb2", "from": {"id": 999}, "message": self.message, "data": "task:create"}
-        response = self.client.post("/api/v1/telegram/webhook/", {"callback_query": callback},
-                                    format="json", HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="secret")
+        response = self.callback("task:example", sender=999)
         self.bot.assert_not_called()
         self.assertEqual(response.data["method"], "answerCallbackQuery")
         self.assertTrue(response.data["show_alert"])
@@ -480,57 +536,20 @@ class TelegramAITaskTests(AITaskFixture, APITestCase):
         self.assertEqual(bot.call_args_list[2].args[0], "setChatMenuButton")
         self.assertEqual(json.loads(bot.call_args_list[2].kwargs["menu_button"]), {"type": "commands"})
 
-    def test_all_menu_screens_navigate_without_ai(self):
-        for screen, heading in [("menu", "Tiko"), ("voice", "Voice task"),
-                                ("template", "Template"), ("example", "Example"),
-                                ("help", "Help")]:
-            with self.subTest(screen=screen):
-                callback = {"id": "cb", "from": {"id": 101}, "message": self.message,
-                            "data": f"task:{screen}"}
-                response = self.client.post("/api/v1/telegram/webhook/", {"callback_query": callback},
-                                            format="json", HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="secret")
-                self.assertEqual(response.status_code, 200)
-                self.assertEqual(response.data["method"], "sendMessage")
-                self.assertIn(heading, response.data["text"])
-        self.extractor.assert_not_called()
-        self.assertFalse(Task.objects.exists())
-
-    def test_template_command_and_repeated_navigation(self):
-        self.message["text"] = "/template"
-        self.webhook()
-        self.assertIn("<pre>Task:", self.bot.call_args.kwargs["text"])
-        self.assertIn("Assign to:", self.bot.call_args.kwargs["text"])
-        callback = {"id": "cb", "from": {"id": 101}, "message": self.message, "data": "task:template"}
-        for _ in range(2):
-            response = self.client.post("/api/v1/telegram/webhook/", {"callback_query": callback},
-                                        format="json", HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="secret")
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.data["method"], "sendMessage")
-            self.assertIn("Template", response.data["text"])
-        self.assertEqual([call.args[0] for call in self.bot.call_args_list[-2:]],
-                         ["answerCallbackQuery", "answerCallbackQuery"])
-        self.extractor.assert_not_called()
-
     def test_expired_callback_still_sends_selected_screen(self):
-        def bot_result(method, **kwargs):
-            if method == "answerCallbackQuery":
-                raise TelegramError("query is too old")
-        self.bot.side_effect = bot_result
-        callback = {"id": "old", "from": {"id": 101}, "message": self.message, "data": "task:example"}
-        response = self.client.post("/api/v1/telegram/webhook/", {"callback_query": callback},
-                                    format="json", HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="secret")
+        self.bot.side_effect = TelegramError("query is too old")
+        response = self.callback("task:example")
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["method"], "sendMessage")
-        self.assertIn("Example", response.data["text"])
+        self.assertIn("Examples", response.data["text"])
 
-    def test_task_confirmation_escapes_html(self):
+    def test_task_confirmation_is_short_and_escapes_html(self):
         self.parsed["title"] = "Fix <login> & signup"
-        self.webhook()
-        self.assertIn("Fix &lt;login&gt; &amp; signup", self.bot.call_args.kwargs["text"])
-        self.assertIn("Task created", self.bot.call_args.kwargs["text"])
-        markup = json.loads(self.bot.call_args.kwargs["reply_markup"])
-        self.assertEqual(markup["inline_keyboard"][0][0]["url"],
-                         task_url(str(Task.objects.get().pk)))
+        response = self.webhook()
+        self.assertTrue(response.data["text"].startswith("✅ <b>Fix &lt;login&gt; &amp; signup</b>"))
+        self.assertIn("👤 Muslima Zokirjonova", response.data["text"])
+        self.assertNotIn("Medium", response.data["text"])
+        self.assertEqual(response.data["reply_markup"]["inline_keyboard"],
+                         [[{"text": "Open", "url": task_url(str(Task.objects.get().pk))}]])
 
     def test_unlinked_sender_and_group_cannot_create(self):
         self.message["from"]["id"] = 999
@@ -544,14 +563,6 @@ class TelegramAITaskTests(AITaskFixture, APITestCase):
     def test_bad_secret(self):
         self.assertEqual(self.webhook(secret="wrong").status_code, 403)
         self.bot.assert_not_called()
-
-    def test_reply_failure_can_retry_without_duplicate_task(self):
-        self.bot.side_effect = TelegramError("Unavailable")
-        self.assertEqual(self.webhook().status_code, 502)
-        self.bot.side_effect = None
-        self.assertEqual(self.webhook().status_code, 200)
-        self.assertEqual(Task.objects.count(), 1)
-        self.extractor.assert_called_once()
 
     def test_group_cannot_consume_connection_token(self):
         integration = TelegramIntegration.objects.get(user=self.user)
@@ -576,6 +587,13 @@ class TelegramAITaskTests(AITaskFixture, APITestCase):
         download.assert_called_once()
         transcriber.assert_called_once()
 
+    @patch("apps.telegram_tasks.download_voice", side_effect=TelegramError("down"))
+    def test_voice_download_failure_lets_telegram_retry(self, download):
+        self.message.pop("text")
+        self.message["voice"] = {"file_id": "abc", "file_unique_id": "unique"}
+        self.assertEqual(self.webhook().status_code, 502)
+        self.assertFalse(Task.objects.exists())
+
     @patch("apps.ai_tasks.extract_task_change")
     def test_telegram_delete_button_confirms_only_own_last_task(self, change_extractor):
         self.webhook()
@@ -587,17 +605,26 @@ class TelegramAITaskTests(AITaskFixture, APITestCase):
         }
         self.message["message_id"] = 2
         self.message["text"] = "Delete my last created task"
-        self.webhook()
-        markup = json.loads(self.bot.call_args.kwargs["reply_markup"])
-        callback_data = markup["inline_keyboard"][0][0]["callback_data"]
+        asked = self.webhook()
+        self.assertIn("Delete <b>", asked.data["text"])
+        callback_data = asked.data["reply_markup"]["inline_keyboard"][0][0]["callback_data"]
         self.assertTrue(Task.objects.filter(pk=task_id).exists())
-        callback = {"id": "delete-cb", "from": {"id": 101}, "message": self.message, "data": callback_data}
-        response = self.client.post("/api/v1/telegram/webhook/", {"callback_query": callback},
-                                    format="json", HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN="secret")
+        response = self.callback(callback_data)
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.data["method"], "sendMessage")
-        self.assertIn("Task deleted", response.data["text"])
+        self.assertIn("Deleted", response.data["text"])
         self.assertFalse(Task.objects.filter(pk=task_id).exists())
+
+    def test_assign_all_send_button_creates_tasks(self):
+        self.message["text"] = "Hammaga: statuslarni yangilang, 11-noyabr"
+        self.parsed["assignee"] = "all"
+        asked = self.webhook()
+        self.assertIn("to 1 employees (IT)?", asked.data["text"])
+        send = asked.data["reply_markup"]["inline_keyboard"][0][0]
+        self.assertEqual(send["text"], "✅ Send")
+        response = self.callback(send["callback_data"])
+        self.assertIn("👥 1 employees · IT", response.data["text"])
+        self.assertEqual(Task.objects.get().main_assignee, self.assignee)
+        self.assertEqual(self.callback("task:cancel").data["text"], "Cancelled")
 
     @patch("apps.telegram_tasks.download_voice")
     @patch("apps.ai_tasks.transcribe", return_value="Muslima uchun vazifa")
@@ -606,8 +633,7 @@ class TelegramAITaskTests(AITaskFixture, APITestCase):
         self.parsed["assignee"] = "Unknown Person"
         self.message.pop("text")
         self.message["voice"] = {"file_id": "abc", "file_unique_id": "unique"}
-        self.webhook()
-        self.assertIn("I heard: Muslima uchun vazifa", self.bot.call_args.kwargs["text"])
+        self.assertIn("I heard: Muslima uchun vazifa", self.webhook().data["text"])
 
 
 @override_settings(OPENAI_API_KEY="test", OPENAI_TASK_MODEL="gpt-5.4-mini", OPENAI_TRANSCRIPTION_MODEL="gpt-4o-mini-transcribe")
@@ -618,6 +644,15 @@ class AIProviderTests(SimpleTestCase):
             provider.return_value = response
             with self.assertRaises(AIUnavailable):
                 extract_task("create a task")
+
+    @patch("apps.ai_provider.request_ai", return_value={})
+    def test_task_extraction_uses_low_reasoning_only_for_reasoning_models(self, provider):
+        with self.assertRaises(AIUnavailable):
+            extract_task("create a task")
+        self.assertEqual(json.loads(provider.call_args.args[1])["reasoning_effort"], "low")
+        with override_settings(OPENAI_TASK_MODEL="gpt-4.1-mini"), self.assertRaises(AIUnavailable):
+            extract_task("create a task")
+        self.assertNotIn("reasoning_effort", json.loads(provider.call_args.args[1]))
 
     @patch("apps.ai_provider.request_ai", return_value={"text": "Muslima uchun task"})
     def test_audio_is_uploaded_with_safe_filename(self, provider):

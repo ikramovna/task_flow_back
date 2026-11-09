@@ -1,6 +1,6 @@
-import json
 import logging
 import re
+import threading
 from html import escape
 
 from urllib.error import URLError
@@ -10,108 +10,97 @@ from django.conf import settings
 from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.exceptions import APIException, ValidationError
 
-from .ai_provider import MAX_AUDIO_BYTES
-from .ai_tasks import confirm_ai_delete, create_ai_task
+from .ai_provider import MAX_AUDIO_BYTES, MAX_IMAGE_BYTES
+from .ai_schedule import build_schedule, choose_person, confirm_schedule, next_question, task_count
+from .ai_tasks import confirm_ai_assign_all, confirm_ai_delete, create_ai_task
 from .digests import today_html
 from .models import TelegramIntegration
 from .telegram import TelegramError, bot_api, task_url, tasks_url
 
 logger = logging.getLogger(__name__)
 
-MENU = json.dumps({"inline_keyboard": [
-    [{"text": "✍️ Text task", "callback_data": "task:create"},
-     {"text": "🎙 Voice task", "callback_data": "task:voice"}],
-    [{"text": "📅 Today", "callback_data": "task:today"},
-     {"text": "💡 Example", "callback_data": "task:example"}],
-    [{"text": "📋 Template", "callback_data": "task:template"},
-     {"text": "❔ Help", "callback_data": "task:help"}],
-]}, ensure_ascii=False)
-BACK_MENU = json.dumps({"inline_keyboard": [
-    [{"text": "💡 Example", "callback_data": "task:example"},
-     {"text": "‹ Menu", "callback_data": "task:menu"}],
-]}, ensure_ascii=False)
+# Typing or a voice message creates a task directly, so the menu only needs two helpers.
+MENU = {"inline_keyboard": [[
+    {"text": "📅 Today", "callback_data": "task:today"},
+    {"text": "💡 Example", "callback_data": "task:example"},
+]]}
 BOT_COMMANDS = [
-    {"command": "menu", "description": "Main menu"},
-    {"command": "create", "description": "New task (text)"},
-    {"command": "voice", "description": "New task (voice)"},
     {"command": "today", "description": "My tasks for today"},
-    {"command": "template", "description": "Task template"},
+    {"command": "example", "description": "Examples"},
     {"command": "help", "description": "Help"},
 ]
 HOME = (
-    "👋 <b>Tiko</b> · task assistant\n\n"
-    "Send a task as <b>text</b> or <b>voice</b>.\n"
-    "<i>O‘zbek · Русский · English</i>"
-)
-PROMPT = (
-    "✍️ <b>New task</b>\n\n"
-    "Write in one message:\n"
-    "• <b>What</b> to do\n"
-    "• <b>Who</b> does it\n"
-    "• <b>When</b> it’s due\n\n"
-    "<i>Ali Valiyev, fix login page, Friday</i>"
-)
-TEMPLATE = (
-    "📋 <b>Template</b>\n\n"
-    "<pre>Task: \n"
-    "Assign to: \n"
-    "Deadline: \n"
-    "Priority: Medium</pre>"
-)
-VOICE = (
-    "🎙 <b>Voice task</b>\n\n"
-    "Hold 🎤 and say <b>what</b>, <b>who</b>, <b>when</b>.\n"
-    "<i>O‘zbek · Русский · English · up to 5 min</i>"
-)
-HELP = (
-    "❔ <b>Help</b>\n\n"
-    "<b>Create</b> — what + who + when\n"
-    "<b>Edit</b> — “Edit last task: priority high”\n"
-    "<b>Delete</b> — “Delete last task”\n"
-    "<b>Today</b> — /today\n\n"
-    "/menu — main menu"
+    "👋 <b>Tiko</b>\n\n"
+    "Write or 🎤 say a task:\n"
+    "<b>who · what · when</b>\n\n"
+    "📷 Or send a photo of a schedule."
 )
 EXAMPLE = (
-    "💡 <b>Example</b>\n\n"
-    "<pre>Muslima Zokirjonova, fix the login page, high priority, Friday</pre>\n"
-    "<pre>Муслима, исправь страницу входа до пятницы</pre>\n"
-    "<pre>Muslimaga login sahifani tuzatish, juma kunigacha</pre>"
+    "💡 <b>Examples</b>\n\n"
+    "<code>Ali, fix the login page, Friday</code>\n"
+    "<code>Alige hisobot tayyorlash, ertaga</code>\n"
+    "<code>Всем: обновите статусы до пятницы</code>"
 )
-SCREENS = {"menu": HOME, "create": PROMPT, "template": TEMPLATE,
-           "voice": VOICE, "help": HELP, "example": EXAMPLE}
+HELP = (
+    "<b>New task</b> — who · what · when\n"
+    "<b>Everyone</b> — start with “All”\n"
+    "<b>Many tasks</b> — send a 📷 photo of the schedule\n"
+    "<b>Edit</b> — “Edit last task: high priority”\n"
+    "<b>Delete</b> — “Delete last task”\n"
+    "/today — my tasks"
+)
+SCREENS = {"menu": HOME, "example": EXAMPLE, "help": HELP}
+# Buttons and commands from older bot versions still open something sensible.
+SCREEN_ALIASES = {"create": "menu", "voice": "menu", "template": "menu"}
+COMMANDS = {"/start": "menu", "/menu": "menu", "/cancel": "menu", "/create": "menu", "/voice": "menu",
+            "/template": "menu", "/example": "example", "/help": "help", "Task yaratish": "menu"}
 
 
-def screen_text(screen):
-    return SCREENS[screen]
+def reply(chat_id, text, keyboard=None):
+    """A bot reply returned in the webhook response: no extra (slow) Telegram API round trip."""
+    payload = {"method": "sendMessage", "chat_id": chat_id, "text": text, "parse_mode": "HTML"}
+    if keyboard:
+        payload["reply_markup"] = keyboard
+    return payload
 
 
 def screen_payload(chat_id, screen):
-    return {"chat_id": chat_id, "text": screen_text(screen), "parse_mode": "HTML",
-            "reply_markup": json.loads(MENU if screen == "menu" else BACK_MENU)}
+    screen = SCREEN_ALIASES.get(screen, screen)
+    return reply(chat_id, SCREENS[screen], MENU if screen == "menu" else None)
 
 
 def today_payload(chat_id, user):
-    return {"chat_id": chat_id, "text": today_html(user), "parse_mode": "HTML",
-            "reply_markup": {"inline_keyboard": [
-                [{"text": "Open tasks", "url": tasks_url()}],
-                [{"text": "‹ Menu", "callback_data": "task:menu"}],
-            ]}}
+    return reply(chat_id, today_html(user), {"inline_keyboard": [[{"text": "Open tasks", "url": tasks_url()}]]})
 
 
-def send_payload(payload):
-    payload = dict(payload)
-    payload["reply_markup"] = json.dumps(payload["reply_markup"], ensure_ascii=False)
-    bot_api("sendMessage", **payload)
+def show_typing(chat_id):
+    """Let the user see Tiko working while the AI reads the request."""
+    if not settings.TELEGRAM_NOTIFY_IN_BACKGROUND:
+        return
+
+    def run():
+        try:
+            bot_api("sendChatAction", chat_id=chat_id, action="typing", timeout=5)
+        except TelegramError:
+            pass
+    threading.Thread(target=run, daemon=True).start()
 
 
-def send_screen(chat_id, screen):
-    send_payload(screen_payload(chat_id, screen))
+def created_html(result):
+    task = result["task"]
+    if result.get("action") == "assign_all":
+        who = f"👥 {result['count']} employees · {', '.join(result.get('departments', []))}"
+    else:
+        who = f"👤 {task['assignee_name']}"
+    details = [who, f"📅 {task['due_date'] or 'No deadline'}"]
+    if task["priority"] != "medium":
+        details.append(f"⚡ {task['priority'].title()}")
+    return f"✅ <b>{escape(task['title'])}</b>\n" + escape(" · ".join(details))
 
 
-def send_menu(chat_id, text="👋 Tiko is ready."):
-    bot_api("sendMessage", chat_id=chat_id, text=text,
-            reply_markup=json.dumps({"remove_keyboard": True}))
-    send_screen(chat_id, "menu")
+def created_payload(chat_id, result):
+    url = tasks_url() if result.get("action") == "assign_all" else task_url(result["task"]["id"])
+    return reply(chat_id, created_html(result), {"inline_keyboard": [[{"text": "Open", "url": url}]]})
 
 
 def handle_task_callback(callback):
@@ -130,58 +119,158 @@ def handle_task_callback(callback):
         return {"method": "answerCallbackQuery", "callback_query_id": callback["id"],
                 "text": "Connect Telegram in your TaskFlow profile first.", "show_alert": True}
     screen = str(callback.get("data", "")).removeprefix("task:")
-    if re.fullmatch(r"delete:[0-9A-Fa-f]{12}", screen):
+    if screen == "cancel":
+        return {"method": "answerCallbackQuery", "callback_query_id": callback["id"], "text": "Cancelled"}
+    schedule_step = re.fullmatch(r"(?:pick:([0-9A-Fa-f]{12}):(\d{1,2}):(\d{1,2}):(\d|s)|sched:([0-9A-Fa-f]{12}))", screen)
+    if schedule_step:
         try:
             bot_api("answerCallbackQuery", callback_query_id=callback["id"], timeout=3)
         except TelegramError:
-            logger.warning("Could not acknowledge Telegram delete callback")
-        try:
-            result = confirm_ai_delete(integration.user, screen.split(":", 1)[1])
-            message_text = result["message"]
-        except APIException as exc:
-            message_text = str(exc.detail)
-        return {"method": "sendMessage", "chat_id": chat["id"], "text": message_text}
-    if screen not in SCREENS and screen != "today":
+            logger.warning("Could not acknowledge Telegram schedule callback")
+        code, item, person, choice, confirm_code = schedule_step.groups()
+        if confirm_code:
+            result = confirm_schedule(integration.user, confirm_code)
+        else:
+            result = choose_person(integration.user, code, int(item), int(person), choice)
+        return schedule_payload(chat["id"], result)
+    known = re.fullmatch(r"(delete|all):[0-9A-Fa-f]{12}", screen) or screen == "today" \
+        or screen in SCREENS or screen in SCREEN_ALIASES
+    if not known:
         return {"method": "answerCallbackQuery", "callback_query_id": callback["id"]}
-    # Clear Telegram's loading indicator quickly. Telegram sends the selected
-    # screen from the webhook response, avoiding a second outbound API request.
+    # Clear Telegram's loading indicator quickly; the screen itself goes in the webhook response.
     try:
         bot_api("answerCallbackQuery", callback_query_id=callback["id"], timeout=3)
     except TelegramError:
-        logger.warning("Could not acknowledge Telegram menu callback; sending screen via webhook response")
+        logger.warning("Could not acknowledge Telegram callback; replying via webhook response")
     if screen == "today":
-        return {"method": "sendMessage", **today_payload(chat["id"], integration.user)}
-    return {"method": "sendMessage", **screen_payload(chat["id"], screen)}
+        return today_payload(chat["id"], integration.user)
+    if screen in SCREENS or screen in SCREEN_ALIASES:
+        return screen_payload(chat["id"], screen)
+    action, code = screen.split(":", 1)
+    try:
+        if action == "delete":
+            result = confirm_ai_delete(integration.user, code)
+            if result["status"] == "deleted":
+                return reply(chat["id"], "🗑 Deleted: " + escape(result["task"]["title"]))
+            return reply(chat["id"], "⚠️ " + escape(result["message"]))
+        result = confirm_ai_assign_all(integration.user, code)
+    except APIException as exc:
+        return reply(chat["id"], "⚠️ " + escape(str(exc.detail)[:500]))
+    if result["status"] != "created":
+        return reply(chat["id"], "⚠️ " + escape(result["message"]))
+    return created_payload(chat["id"], result)
+
+
+def download_file(file_id, max_bytes, label):
+    if not isinstance(file_id, str) or not file_id:
+        raise ValidationError(f"The {label} could not be found.")
+    result = bot_api("getFile", file_id=file_id)
+    path = result.get("file_path", "") if isinstance(result, dict) else ""
+    if not re.fullmatch(r"[a-zA-Z0-9_/-]+\.[a-zA-Z0-9]+", path) or ".." in path:
+        raise TelegramError(f"The Telegram {label} could not be downloaded.")
+    try:
+        with urlopen(f"https://api.telegram.org/file/bot{settings.TELEGRAM_BOT_TOKEN}/{path}", timeout=20) as response:
+            content = response.read(max_bytes + 1)
+    except (URLError, TimeoutError, OSError) as exc:
+        raise TelegramError(f"The Telegram {label} could not be downloaded.") from exc
+    if len(content) > max_bytes:
+        raise ValidationError(f"The {label} is too large.")
+    return content
 
 
 def download_voice(voice):
     if voice.get("file_size", 0) > MAX_AUDIO_BYTES or voice.get("duration", 0) > 300:
         raise ValidationError("Voice messages must not exceed 20 MB or 5 minutes.")
-    file_id = voice.get("file_id")
-    if not isinstance(file_id, str) or not file_id:
-        raise ValidationError("The voice file could not be found.")
-    result = bot_api("getFile", file_id=file_id)
-    path = result.get("file_path", "") if isinstance(result, dict) else ""
-    if not re.fullmatch(r"[a-zA-Z0-9_/-]+\.[a-zA-Z0-9]+", path) or ".." in path:
-        raise TelegramError("The Telegram voice file could not be downloaded.")
-    try:
-        with urlopen(f"https://api.telegram.org/file/bot{settings.TELEGRAM_BOT_TOKEN}/{path}", timeout=20) as response:
-            content = response.read(MAX_AUDIO_BYTES + 1)
-    except (URLError, TimeoutError, OSError) as exc:
-        raise TelegramError("The Telegram voice file could not be downloaded.") from exc
-    if len(content) > MAX_AUDIO_BYTES:
-        raise ValidationError("Voice messages must not exceed 20 MB.")
+    content = download_file(voice.get("file_id"), MAX_AUDIO_BYTES, "voice file")
     # Telegram voice messages use OGG/Opus, sometimes with an .oga filename.
     return SimpleUploadedFile("voice.ogg", content, content_type="audio/ogg")
 
 
-def created_html(task):
-    return (
-        "✅ <b>Task created</b>\n\n"
-        f"<b>{escape(task['title'])}</b>\n"
-        f"👤 {escape(task['assignee_name'])}\n"
-        f"📅 {escape(task['due_date'] or 'No deadline')} · ⚡ {escape(task['priority'].title())}"
-    )
+IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp"}
+
+
+def message_image(message):
+    """The largest photo size, or an image sent as a file; returns (file_id, unique_id, mime type)."""
+    photos = message.get("photo") or []
+    if photos:
+        best = max(photos, key=lambda size: size.get("file_size") or size.get("width", 0) * size.get("height", 0))
+        return best.get("file_id"), best.get("file_unique_id", ""), "image/jpeg", best.get("file_size", 0)
+    document = message.get("document") or {}
+    if document.get("mime_type") in IMAGE_TYPES:
+        return (document.get("file_id"), document.get("file_unique_id", ""), document["mime_type"],
+                document.get("file_size", 0))
+    return None
+
+
+def schedule_payload(chat_id, result):
+    if result["status"] == "created":
+        text = f"✅ <b>Created {result['count']} tasks</b>"
+        if result.get("failed"):
+            text += f"\n⚠️ {result['failed']} not created (outside your departments)."
+        return reply(chat_id, text, {"inline_keyboard": [[{"text": "Open tasks", "url": tasks_url()}]]})
+    if result["status"] != "needs_confirmation":
+        return reply(chat_id, "❓ " + escape(result["message"]))
+    code = result["confirmation_code"]
+    question = next_question(result)
+    if question:
+        i, j = question
+        item, person = result["items"][i], result["items"][i]["people"][j]
+        buttons = [[{"text": candidate["name"][:60], "callback_data": f"task:pick:{code}:{i}:{j}:{k}"}]
+                   for k, candidate in enumerate(person["candidates"])]
+        buttons.append([{"text": "Skip", "callback_data": f"task:pick:{code}:{i}:{j}:s"}])
+        text = (f"👤 Which <b>{escape(person['name'])}</b>?\n"
+                f"<i>{escape(item['title'])} · {item['date'][8:]}.{item['date'][5:7]}</i>")
+        return reply(chat_id, text, {"inline_keyboard": buttons})
+    lines = []
+    for item in result["items"]:
+        names = [person["label"] for person in item["people"] if person["status"] == "ok"]
+        missing = [person["name"] for person in item["people"] if person["status"] == "unknown"]
+        when = f"{item['date'][8:]}.{item['date'][5:7]}" + (f" {item['time']}" if item["time"] else "")
+        who = ", ".join(names) if names else "—"
+        if missing:
+            who += f" (❔ {', '.join(missing)})"
+        lines.append(f"• {when} {item['title']} → {who}")
+    count = task_count(result)
+    text = f"🗓 <b>{count} tasks</b>\n\n" + escape("\n".join(lines)[:3000])
+    notes = []
+    if any(person["status"] == "unknown" for item in result["items"] for person in item["people"]):
+        notes.append("❔ = name not found, skipped")
+    if result.get("skipped"):
+        notes.append(f"{result['skipped']} past or unnamed events skipped")
+    if notes:
+        text += "\n\n<i>" + escape(" · ".join(notes)) + "</i>"
+    if not count:
+        return reply(chat_id, text + "\n\nNo one to assign.")
+    return reply(chat_id, text, {"inline_keyboard": [[
+        {"text": f"✅ Create {count}", "callback_data": f"task:sched:{code}"},
+        {"text": "✖️ Cancel", "callback_data": "task:cancel"},
+    ]]})
+
+
+def result_payload(chat_id, result):
+    status = result["status"]
+    if status == "created":
+        return created_payload(chat_id, result)
+    if status == "updated":
+        task = result["task"]
+        return reply(chat_id, "✏️ Updated: <b>" + escape(task["title"]) + "</b>",
+                     {"inline_keyboard": [[{"text": "Open", "url": task_url(task["id"])}]]})
+    if status == "deleted":
+        return reply(chat_id, "🗑 Deleted: " + escape(result["task"]["title"]))
+    if status == "needs_confirmation" and result.get("action") == "assign_all":
+        pending = result["pending_task"]
+        text = (f"👥 Send <b>{escape(pending['title'])}</b> to {len(result['member_ids'])} employees "
+                f"({escape(', '.join(result['departments']))})?")
+        return reply(chat_id, text, {"inline_keyboard": [[
+            {"text": "✅ Send", "callback_data": f"task:all:{result['confirmation_code']}"},
+            {"text": "✖️ Cancel", "callback_data": "task:cancel"},
+        ]]})
+    if status == "needs_confirmation":
+        return reply(chat_id, f"🗑 Delete <b>{escape(result['task']['title'])}</b>?", {"inline_keyboard": [[
+            {"text": "🗑 Delete", "callback_data": f"task:delete:{result['confirmation_code']}"},
+            {"text": "✖️ Cancel", "callback_data": "task:cancel"},
+        ]]})
+    return reply(chat_id, "❓ " + escape(result["message"]))
 
 
 def handle_task_message(message):
@@ -189,70 +278,47 @@ def handle_task_message(message):
     sender = message.get("from") or {}
     chat_id = chat.get("id")
     if chat.get("type") != "private" or not sender.get("id"):
-        return
+        return None
     integration = TelegramIntegration.objects.select_related("user").filter(
         telegram_user_id=sender["id"], telegram_chat_id=chat_id,
         is_connected=True, user__is_active=True,
     ).first()
     if not integration:
-        bot_api("sendMessage", chat_id=chat_id, text="Open TaskFlow → Profile → Connect Telegram first.")
-        return
+        return reply(chat_id, "Connect Telegram in TaskFlow → Profile first.")
     text = message.get("text", "").strip()
-    if text in {"/start", "Task yaratish"}:
-        send_menu(chat_id)
-        return
     command = text.split("@", 1)[0] if " " not in text else text
-    screens = {"/menu": "menu", "/create": "create", "Create task": "create",
-               "/voice": "voice", "/template": "template", "/example": "example",
-               "/help": "help", "/cancel": "menu"}
     if command == "/today":
-        send_payload(today_payload(chat_id, integration.user))
-        return
-    if command in screens:
-        send_screen(chat_id, screens[command])
-        return
+        return today_payload(chat_id, integration.user)
+    if command in COMMANDS:
+        return screen_payload(chat_id, COMMANDS[command])
+    image = message_image(message)
+    if image and message.get("message_id"):
+        file_id, unique_id, mime_type, size = image
+        if size and size > MAX_IMAGE_BYTES:
+            return reply(chat_id, "⚠️ The image must be under 10 MB.")
+        show_typing(chat_id)
+        try:
+            result = build_schedule(
+                user=integration.user, request_key=f"telegram:{chat_id}:{message['message_id']}",
+                image_loader=lambda: (download_file(file_id, MAX_IMAGE_BYTES, "image"), mime_type),
+                source_identity=unique_id or file_id, note=message.get("caption", ""),
+            )
+        except APIException as exc:
+            return reply(chat_id, "⚠️ " + escape(str(exc.detail)[:500]))
+        return schedule_payload(chat_id, result)
     voice = message.get("voice")
     if not (text or voice) or not message.get("message_id"):
-        send_screen(chat_id, "menu")
-        return
+        return screen_payload(chat_id, "menu")
     if text.startswith("/create "):
         text = text.split(maxsplit=1)[1]
+    show_typing(chat_id)
     try:
         result = create_ai_task(
             user=integration.user, request_key=f"telegram:{chat_id}:{message['message_id']}",
             text=text, audio_loader=(lambda: download_voice(voice)) if voice else None,
             source_identity=voice.get("file_unique_id", voice.get("file_id", "")) if voice else "",
         )
-        reply = "❓ " + escape(result["message"])
-        markup = MENU
-        if result["status"] == "created":
-            task = result["task"]
-            reply = created_html(task)
-            markup = json.dumps({"inline_keyboard": [
-                [{"text": "Open task", "url": task_url(result["task"]["id"])},
-                 {"text": "➕ New task", "callback_data": "task:create"}],
-            ]})
-        elif result["status"] == "updated":
-            task = result["task"]
-            reply = "✏️ <b>Task updated</b>\n\n" + escape(task["title"])
-            markup = json.dumps({"inline_keyboard": [[
-                {"text": "Open task", "url": task_url(task["id"])}
-            ]]})
-        elif result["status"] == "needs_confirmation":
-            reply = "⚠️ <b>Delete?</b>\n\n" + escape(result["message"])
-            markup = json.dumps({"inline_keyboard": [[
-                {"text": "🗑 Delete", "callback_data": f"task:delete:{result['confirmation_code']}"}
-            ]]})
-        elif result["status"] == "deleted":
-            reply = "🗑 <b>Task deleted</b>\n\n" + escape(result["task"]["title"])
-            markup = MENU
-        elif result.get("clarification_type") == "assignee":
-            markup = None
     except APIException as exc:
         # A failed analysis rolls back the receipt so a fresh message can retry.
-        reply = "⚠️ " + escape(str(exc.detail)[:1500])
-        markup = MENU
-    payload = {"chat_id": chat_id, "text": reply, "parse_mode": "HTML"}
-    if markup:
-        payload["reply_markup"] = markup
-    bot_api("sendMessage", **payload)
+        return reply(chat_id, "⚠️ " + escape(str(exc.detail)[:1500]))
+    return result_payload(chat_id, result)

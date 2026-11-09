@@ -111,7 +111,7 @@ class TelegramIntegrationApiTests(APITestCase):
         self.assertIsNotNone(integration.link_token)
         self.assertGreater(integration.link_token_expires_at, timezone.now())
 
-    @patch("apps.telegram_tasks.bot_api")
+    @patch("apps.views.bot_api")
     def test_start_payload_connects_telegram_account(self, mocked_bot_api):
         integration = TelegramIntegration.objects.create(
             user=self.user,
@@ -130,7 +130,10 @@ class TelegramIntegrationApiTests(APITestCase):
         self.assertTrue(integration.is_connected)
         self.assertEqual(integration.telegram_user_id, 654)
         self.assertIsNone(integration.link_token)
-        self.assertEqual(mocked_bot_api.call_count, 2)
+        # One API call for the confirmation; the menu travels in the webhook response.
+        self.assertEqual(mocked_bot_api.call_count, 1)
+        self.assertEqual(response.data["method"], "sendMessage")
+        self.assertIn("Tiko", response.data["text"])
 
     def test_webhook_rejects_invalid_secret(self):
         response = self.client.post(

@@ -40,7 +40,7 @@ from .task_visibility import PRIVILEGED_TASK_ROLES, visible_tasks_for
 from .reporting import REPORT_TEMPLATES, build_report_docx, build_report_result
 from .task_creation import ensure_task_creator, save_task
 from .ai_tasks import AITaskInputSerializer, create_ai_task
-from .telegram_tasks import handle_task_message, handle_task_callback, send_menu, BOT_COMMANDS
+from .telegram_tasks import handle_task_message, handle_task_callback, screen_payload, BOT_COMMANDS
 
 
 class PasswordResetRequestView(generics.GenericAPIView):
@@ -1703,13 +1703,14 @@ class TelegramWebhookView(APIView):
             integration.link_token = None
             integration.link_token_expires_at = None
             integration.save()
-            send_menu(chat_id, "✅ Telegram connected to TaskFlow.")
-        else:
-            try:
-                handle_task_message(message)
-            except TelegramError:
-                return Response({"ok": False}, status=502)
-        return Response({"ok": True})
+            bot_api("sendMessage", chat_id=chat_id, text="✅ Telegram connected.",
+                    reply_markup=json.dumps({"remove_keyboard": True}))
+            return Response(screen_payload(chat_id, "menu"))
+        try:
+            # The reply travels in the webhook response: one less Telegram round trip per message.
+            return Response(handle_task_message(message) or {"ok": True})
+        except TelegramError:
+            return Response({"ok": False}, status=502)
 
 
 class TelegramWebhookSetupView(APIView):
