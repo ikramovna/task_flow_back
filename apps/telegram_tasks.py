@@ -11,11 +11,12 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from rest_framework.exceptions import APIException, ValidationError
 
 from .ai_provider import MAX_AUDIO_BYTES, MAX_IMAGE_BYTES
-from .ai_schedule import build_schedule, choose_person, confirm_schedule, next_question, task_count
+from .ai_schedule import (MAX_TOGGLES, build_schedule, choose_person, confirm_schedule, next_question,
+                          people_order, toggle_person)
 from .ai_tasks import cancel_pending, confirm_ai_assign_all, confirm_ai_delete, create_ai_task
 from .digests import today_html
 from .models import TelegramIntegration
-from .telegram import TelegramError, bot_api, task_url, tasks_url
+from .telegram import TelegramError, bot_api, calendar_url, task_url, tasks_url
 
 logger = logging.getLogger(__name__)
 
@@ -31,31 +32,37 @@ BOT_COMMANDS = [
     {"command": "help", "description": "How to create a task"},
 ]
 HOME = (
-    "👋 <b>Tiko</b> creates tasks for you\n\n"
+    "👋 <b>Tiko</b> — tasks & meetings\n\n"
     "✍️ <b>Text</b> — just write it here\n"
     "🎤 <b>Voice</b> — hold the mic, speak\n"
-    "📷 <b>Photo</b> — send a schedule\n\n"
-    "Always say: <b>who</b> · <b>what</b> · <b>when</b>"
+    "📷 <b>Photo</b> — a calendar goes to the calendar\n\n"
+    "Task: <b>who</b> · <b>what</b> · <b>when</b>\n"
+    "Meeting: say <b>“meeting”</b> + day, time, people"
 )
 EXAMPLE = (
-    "💡 <b>Examples</b>\n"
-    "<i>who — what — when</i>\n\n"
-    "👤 <b>Ali</b> — fix the login page — <b>Friday</b>\n\n"
-    "👤 <b>Aliga</b> — hisobot tayyorlash — <b>ertaga</b>\n\n"
+    "💡 <b>Examples</b>\n\n"
+    "<b>Tasks</b> <i>(who — what — when)</i>\n"
+    "👤 <b>Ali</b> — fix the login page — <b>Friday</b>\n"
+    "👤 <b>Aliga</b> — hisobot tayyorlash — <b>ertaga</b>\n"
     "👥 <b>Всем</b> — обновить статусы — <b>до пятницы</b>\n\n"
-    "📷 <b>Photo</b> of a schedule → many tasks"
+    "<b>Meetings</b> <i>(meeting — when — topic — who)</i>\n"
+    "📅 <b>Meeting</b> Friday <b>14:00</b> about the report with <b>Ali and Muslima</b>\n"
+    "📅 Ertaga soat <b>10:00</b> da <b>hammaga</b> <b>yig‘ilish</b>, oylik reja\n\n"
+    "📷 <b>Calendar photo</b> → events in the calendar"
 )
 HELP = (
-    "❔ <b>How to create a task</b>\n\n"
-    "✍️ <b>1. Text</b>\n"
+    "❔ <b>How to use Tiko</b>\n\n"
+    "✍️ <b>Task by text</b>\n"
     "Write who, what, when and send.\n"
     "<i>Ali — fix login page — Friday</i>\n\n"
-    "🎤 <b>2. Voice</b>\n"
-    "<b>Hold</b> the 🎤 button (bottom right), say who, what, when, then <b>release</b>.\n"
+    "🎤 <b>Voice</b>\n"
+    "<b>Hold</b> the 🎤 button (bottom right), speak, then <b>release</b>.\n"
     "<i>O‘zbek · Русский · English</i>\n\n"
-    "📷 <b>3. Photo</b>\n"
-    "Send a schedule photo → pick names → <b>✅ Create</b>.\n\n"
-    "👥 <b>Everyone</b> — start with “All” or “Hammaga”\n"
+    "📅 <b>Meeting</b>\n"
+    "Say “meeting” / “yig‘ilish” / “встреча” + day, time, topic, people → <b>✅ Add</b>.\n\n"
+    "📷 <b>Calendar photo</b>\n"
+    "Events go to the calendar → pick names → <b>✅ Add</b>.\n\n"
+    "👥 <b>Everyone</b> — say “All” or “Hammaga”\n"
     "✏️ <b>Edit</b> — “Edit last task: high priority”\n"
     "🗑 <b>Delete</b> — “Delete last task”"
 )
@@ -134,7 +141,7 @@ def handle_task_callback(callback):
     screen = str(callback.get("data", "")).removeprefix("task:")
     step = re.fullmatch(
         r"cancel(?::([0-9A-Fa-f]{12}))?|(delete|all|sched):([0-9A-Fa-f]{12})"
-        r"|pick:([0-9A-Fa-f]{12}):(\d{1,2}):(\d{1,2}):(\d|s)", screen)
+        r"|pick:([0-9A-Fa-f]{12}):(\d{1,2}):(\d{1,2}):(\d|s)|tog:([0-9A-Fa-f]{12}):(\d{1,2})", screen)
     known = step or screen == "today" or screen in SCREENS or screen in SCREEN_ALIASES
     if not known:
         return {"method": "answerCallbackQuery", "callback_query_id": callback["id"]}
@@ -160,11 +167,13 @@ def as_edit(payload, message_id):
 
 
 def confirmation_step(user, chat_id, step):
-    cancel_code, action, code, pick_code, item, person, choice = step.groups()
+    cancel_code, action, code, pick_code, item, person, choice, toggle_code, toggle_index = step.groups()
     if step.group(0).startswith("cancel"):
         if cancel_code:
             cancel_pending(user, cancel_code)
         return reply(chat_id, "✖️ Cancelled")
+    if toggle_code:
+        return schedule_payload(chat_id, toggle_person(user, toggle_code, int(toggle_index)))
     if pick_code:
         return schedule_payload(chat_id, choose_person(user, pick_code, int(item), int(person), choice))
     if action == "sched":
@@ -224,12 +233,31 @@ def message_image(message):
     return None
 
 
+def _day(item):
+    return f"{item['date'][8:]}.{item['date'][5:7]}"
+
+
+def _who(item, limit=5):
+    names = [person["label"] for person in item["people"] if person["status"] == "ok"]
+    missing = [person["name"] for person in item["people"] if person["status"] == "unknown"]
+    who = ", ".join(names) if len(names) <= limit else f"{len(names)} people"
+    if missing:
+        who = (who + " " if names else "") + f"(❔ {', '.join(missing)})"
+    return who
+
+
 def schedule_payload(chat_id, result):
+    """Calendar events from a photo or a meeting request: ask names, preview, add."""
     if result["status"] == "created":
-        text = f"✅ <b>Created {result['count']} tasks</b>"
+        if result.get("event"):
+            text = f"✅ <b>{escape(result['event']['title'])}</b>\n📅 {escape(result['event']['when'])}"
+        else:
+            text = f"✅ <b>Added {result['count']} events to calendar</b>"
+        if result.get("invited"):
+            text += f"\n📨 {result['invited']} people notified"
         if result.get("failed"):
-            text += f"\n⚠️ {result['failed']} not created (outside your departments)."
-        return reply(chat_id, text, {"inline_keyboard": [[{"text": "Open tasks", "url": tasks_url()}]]})
+            text += f"\n⚠️ {result['failed']} not added (no access to that department)."
+        return reply(chat_id, text, {"inline_keyboard": [[{"text": "Open calendar", "url": calendar_url()}]]})
     if result["status"] != "needs_confirmation":
         return reply(chat_id, "❓ " + escape(result["message"]))
     code = result["confirmation_code"]
@@ -240,37 +268,47 @@ def schedule_payload(chat_id, result):
         buttons = [[{"text": candidate["name"][:60], "callback_data": f"task:pick:{code}:{i}:{j}:{k}"}]
                    for k, candidate in enumerate(person["candidates"])]
         buttons.append([{"text": "Skip", "callback_data": f"task:pick:{code}:{i}:{j}:s"}])
-        text = (f"👤 Which <b>{escape(person['name'])}</b>?\n"
-                f"<i>{escape(item['title'])} · {item['date'][8:]}.{item['date'][5:7]}</i>")
+        text = f"👤 Which <b>{escape(person['name'])}</b>?\n<i>{escape(item['title'])} · {_day(item)}</i>"
         return reply(chat_id, text, {"inline_keyboard": buttons})
-    lines = []
-    for item in result["items"]:
-        names = [person["label"] for person in item["people"] if person["status"] == "ok"]
-        missing = [person["name"] for person in item["people"] if person["status"] == "unknown"]
-        when = f"{item['date'][8:]}.{item['date'][5:7]}" + (f" {item['time']}" if item["time"] else "")
-        who = ", ".join(names) if names else "—"
-        if missing:
-            who += f" (❔ {', '.join(missing)})"
-        lines.append(f"• {when} {item['title']} → {who}")
-    count = task_count(result)
-    text = f"🗓 <b>{count} tasks</b>\n\n" + escape("\n".join(lines)[:3000])
-    notes = []
-    if any(person["status"] == "unknown" for item in result["items"] for person in item["people"]):
-        notes.append("❔ = name not found, skipped")
-    if result.get("skipped"):
-        notes.append(f"{result['skipped']} past or unnamed events skipped")
-    if notes:
-        text += "\n\n<i>" + escape(" · ".join(notes)) + "</i>"
-    if not count:
-        return reply(chat_id, text + "\n\nNo one to assign.")
-    return reply(chat_id, text, {"inline_keyboard": [[
-        {"text": f"✅ Create {count}", "callback_data": f"task:sched:{code}"},
+    items = result["items"]
+    if len(items) == 1:
+        item = items[0]
+        clock = item["time"] + (f"–{item['end_time']}" if item["end_time"] else "") if item["time"] else ""
+        lines = [f"📅 <b>{escape(item['title'])}</b>", f"🕑 {_day(item)} {clock}".rstrip()]
+        if item["location"]:
+            lines.append(f"📍 {escape(item['location'])}")
+        lines.append(f"👥 {escape(_who(item, limit=8) or 'Only you')}")
+        if result.get("heard"):
+            lines.append(f"🎤 <i>{escape(result['heard'][:300])}</i>")
+        text, label = "\n".join(lines), "✅ Add to calendar"
+    else:
+        lines = [f"• {_day(item)}{' ' + item['time'] if item['time'] else ''} {item['title']}"
+                 + (f" → {_who(item)}" if _who(item) else "") for item in items]
+        text = f"🗓 <b>{len(items)} events</b>\n\n" + escape("\n".join(lines)[:3000])
+        if result.get("skipped"):
+            text += f"\n\n<i>{result['skipped']} past events skipped</i>"
+        label = f"✅ Add {len(items)} to calendar"
+    if any(person["status"] == "unknown" for item in items for person in item["people"]):
+        text += "\n<i>❔ = name not found, not invited</i>"
+    # Everyone found, as tick buttons: tap to leave a person out (⬜) or bring them back (✅).
+    people = people_order(result)
+    buttons = []
+    if 0 < len(people) <= MAX_TOGGLES:
+        text += "\n\n<i>Tap a name to remove or add them.</i>"
+        toggles = [{"text": f"{'✅' if selected else '⬜'} {label}"[:60], "callback_data": f"task:tog:{code}:{index}"}
+                   for index, (_, label, selected) in enumerate(people)]
+        buttons = [toggles[i:i + 2] for i in range(0, len(toggles), 2)]
+    buttons.append([
+        {"text": label, "callback_data": f"task:sched:{code}"},
         {"text": "✖️ Cancel", "callback_data": f"task:cancel:{code}"},
-    ]]})
+    ])
+    return reply(chat_id, text, {"inline_keyboard": buttons})
 
 
 def result_payload(chat_id, result):
     status = result["status"]
+    if result.get("action") == "schedule":
+        return schedule_payload(chat_id, result)
     if status == "created":
         return created_payload(chat_id, result)
     if status == "updated":

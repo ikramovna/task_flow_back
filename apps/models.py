@@ -308,6 +308,7 @@ class Notification(TimeStampedModel):
         NEW_MESSAGE = "new_message", "New Message"
         DAILY_DIGEST = "daily_digest", "Daily Digest"
         WEEKLY_PERFORMANCE = "weekly_performance", "Weekly Performance"
+        EVENT_INVITE = "event_invite", "Event Invite"
 
     recipient = models.ForeignKey(User, on_delete=models.CASCADE, related_name="notifications")
     actor = models.ForeignKey(

@@ -79,6 +79,12 @@ ALL_REFERENCE = re.compile(
 ALL_ASSIGNEE_NAMES = {"all", "all employees", "all employee", "all staff", "everyone", "everybody",
                       "hammaga", "barchaga", "barcha xodimlar", "всем", "все сотрудники"}
 MAX_ALL_ASSIGNEES = 200
+EVENT_CONFIRMATION = re.compile(r"^confirm event ([0-9a-f]{12})$", re.IGNORECASE)
+# normalize() drops apostrophes: yig'ilish -> yigilish.
+MEETING_WORDS = re.compile(
+    r"(?<!\w)(meeting\w*|meetup|uchrashuv\w*|yigilish\w*|majlis\w*|"
+    r"встреч\w*|совещани\w*|собрани\w*|созвон\w*|планерк\w*|митинг\w*)(?!\w)"
+)
 INSTRUCTION_WORDS = re.compile(r"(?<!\w)(your|yours|sizning|sizlar\w*|ваш\w*|сво\w*)(?!\w)")
 
 
@@ -88,8 +94,13 @@ def task_intent(text):
         return "confirm_delete"
     if ALL_CONFIRMATION.fullmatch(normalized):
         return "confirm_all"
+    if EVENT_CONFIRMATION.fullmatch(normalized):
+        return "confirm_event"
     if re.match(r"^(?:create (?:a )?task|task yarat\w*|vazifa yarat\w*|созда\w* задач\w*)\b", normalized):
         return "create"
+    # "Meeting on Friday 14:00 with Ali" goes to the calendar, not the task list.
+    if MEETING_WORDS.search(normalized):
+        return "event"
     # "Please update YOUR task status" / "hammaga ..." instructs other people: it is a new task,
     # not an edit of an existing one, even though it contains "update" and "task".
     if INSTRUCTION_WORDS.search(normalized) or ALL_REFERENCE.search(normalized):
@@ -648,6 +659,12 @@ def create_ai_task(*, user, request_key, text="", audio=None, audio_loader=None,
             result = confirm_ai_delete(user, code)
         elif intent == "confirm_all":
             result = confirm_ai_assign_all(user, ALL_CONFIRMATION.fullmatch(normalize(transcript)).group(1))
+        elif intent in {"event", "confirm_event"}:
+            from .ai_schedule import build_meeting, confirm_schedule  # imports this module
+            if intent == "event":
+                result = build_meeting(user, transcript)
+            else:
+                result = confirm_schedule(user, EVENT_CONFIRMATION.fullmatch(normalize(transcript)).group(1))
         elif intent == "ambiguous":
             result = clarify("Please request either an edit or a deletion, one at a time.", transcript)
         elif intent == "create":
@@ -657,9 +674,9 @@ def create_ai_task(*, user, request_key, text="", audio=None, audio_loader=None,
                 result = build_task(user, transcript, from_voice=audio is not None)
         else:
             result = build_task_change(user, transcript, intent, from_voice=audio is not None)
-        if audio is not None and result["status"] in {"needs_clarification", "needs_confirmation"}:
-            result["message"] += f"\n\nI heard: {transcript[:600]}"
-        elif audio is not None:
+        if audio is not None:
             result["heard"] = transcript[:600]  # shown with the result so a mishearing is visible
+            if result["status"] in {"needs_clarification", "needs_confirmation"}:
+                result["message"] += f"\n\nI heard: {transcript[:600]}"
         AITaskRequest.objects.create(user=user, request_key=request_key, fingerprint=fingerprint, result=result)
         return result

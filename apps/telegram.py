@@ -53,9 +53,14 @@ def tasks_url():
     return f"{settings.FRONTEND_URL.rstrip('/')}/#tasks"
 
 
+def calendar_url():
+    return f"{settings.FRONTEND_URL.rstrip('/')}/#calendar"
+
+
 NOTIFICATION_ICONS = {
     "task_assigned": "📌", "deadline_reminder": "⏰", "task_overdue": "🔴",
     "task_completed": "✅", "new_message": "💬", "daily_digest": "☀️", "weekly_performance": "📊",
+    "event_invite": "📅",
 }
 
 
@@ -92,6 +97,10 @@ def send_notification(notification):
     if notification.task:
         payload["reply_markup"] = json.dumps({
             "inline_keyboard": [[{"text": "Open task", "url": task_url(notification.task)}]]
+        })
+    elif notification.notification_type == "event_invite":
+        payload["reply_markup"] = json.dumps({
+            "inline_keyboard": [[{"text": "Open calendar", "url": calendar_url()}]]
         })
     elif notification.notification_type in {"daily_digest", "weekly_performance"}:
         payload["reply_markup"] = json.dumps({
