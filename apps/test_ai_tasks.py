@@ -72,6 +72,20 @@ class AITaskTests(AITaskFixture, APITestCase):
         self.assertEqual(response.data["status"], "needs_clarification")
         self.assertFalse(Task.objects.exists())
 
+    def test_self_assignee_without_self_reference_asks_who(self):
+        self.payload["text"] = "mept update\n\ndue today"
+        self.parsed["assignee"] = "self"
+        response = self.post()
+        self.assertEqual(response.data["status"], "needs_clarification", response.data)
+        self.assertFalse(Task.objects.exists())
+
+    def test_explicit_self_assignment_is_allowed(self):
+        self.payload["text"] = "Menga websiteni fix qilish taskini yarat, deadline 23 may"
+        self.parsed["assignee"] = "self"
+        response = self.post()
+        self.assertEqual(response.status_code, 201, response.data)
+        self.assertEqual(Task.objects.get().main_assignee, self.user)
+
     def test_first_name_creates_task_when_only_one_employee_matches(self):
         User.objects.create_user(username="surname-match", email="surname@example.com",
                                  first_name="Ali", last_name="Muslima", department=self.department)

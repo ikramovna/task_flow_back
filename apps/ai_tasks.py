@@ -220,6 +220,19 @@ def exact_assignee_matches(user, name, *, candidates=None):
     return []
 
 
+SELF_REFERENCE = re.compile(
+    r"(?<!\w)(men|menga|meni|mening|o['‘’`ʻʼ]?zim|o['‘’`ʻʼ]?zimga|o['‘’`ʻʼ]?zimni|o['‘’`ʻʼ]?zimning|"
+    r"me|myself|i['‘’]ll|"
+    r"я|мне|меня|себе|себя|сам|сама)(?!\w)",
+    re.IGNORECASE,
+)
+
+
+def mentions_self(text):
+    """The model may only assign to the requester when the request itself says so."""
+    return bool(SELF_REFERENCE.search(text or ""))
+
+
 def resolve_assignee(user, name, *, from_voice=False):
     if name == "self":
         return user if user.department_id else None
@@ -264,6 +277,8 @@ def build_task(user, transcript, *, from_voice=False):
     data = extracted.validated_data
     if data["due_date"] and data["due_date"] < timezone.localdate():
         return clarify("The deadline is in the past. Please resend the complete task with a future date, including the year.", transcript)
+    if data["assignee"] == "self" and not mentions_self(transcript):
+        return clarify("Who should do this task? Please resend the complete task with the assignee's full name or email.", transcript)
     assignee = resolve_assignee(user, data["assignee"], from_voice=from_voice)
     if not assignee:
         exact = exact_assignee_matches(user, data["assignee"])
@@ -379,6 +394,8 @@ def build_task_change(user, transcript, intent, *, from_voice=False):
             return clarify("Give the new deadline as an exact day, month, and year.", transcript)
         if due_date < timezone.localdate():
             return clarify("The new deadline is in the past. Give a future date.", transcript)
+    if parsed["assignee"] == "self" and not mentions_self(transcript):
+        parsed["assignee"] = None
     if parsed["assignee"]:
         assignee = resolve_assignee(user, parsed["assignee"], from_voice=from_voice)
         if not assignee:
