@@ -12,47 +12,57 @@ from rest_framework.exceptions import APIException, ValidationError
 
 from .ai_provider import MAX_AUDIO_BYTES, MAX_IMAGE_BYTES
 from .ai_schedule import build_schedule, choose_person, confirm_schedule, next_question, task_count
-from .ai_tasks import confirm_ai_assign_all, confirm_ai_delete, create_ai_task
+from .ai_tasks import cancel_pending, confirm_ai_assign_all, confirm_ai_delete, create_ai_task
 from .digests import today_html
 from .models import TelegramIntegration
 from .telegram import TelegramError, bot_api, task_url, tasks_url
 
 logger = logging.getLogger(__name__)
 
-# Typing or a voice message creates a task directly, so the menu only needs two helpers.
-MENU = {"inline_keyboard": [[
-    {"text": "📅 Today", "callback_data": "task:today"},
-    {"text": "💡 Example", "callback_data": "task:example"},
-]]}
+# Typing, a voice message or a photo creates tasks directly, so the menu only needs helpers.
+MENU = {"inline_keyboard": [
+    [{"text": "📅 Today", "callback_data": "task:today"},
+     {"text": "💡 Example", "callback_data": "task:example"}],
+    [{"text": "❔ How to use", "callback_data": "task:help"}],
+]}
 BOT_COMMANDS = [
     {"command": "today", "description": "My tasks for today"},
     {"command": "example", "description": "Examples"},
-    {"command": "help", "description": "Help"},
+    {"command": "help", "description": "How to create a task"},
 ]
 HOME = (
-    "👋 <b>Tiko</b>\n\n"
-    "Write or 🎤 say a task:\n"
-    "<b>who · what · when</b>\n\n"
-    "📷 Or send a photo of a schedule."
+    "👋 <b>Tiko</b> creates tasks for you\n\n"
+    "✍️ <b>Text</b> — just write it here\n"
+    "🎤 <b>Voice</b> — hold the mic, speak\n"
+    "📷 <b>Photo</b> — send a schedule\n\n"
+    "Always say: <b>who</b> · <b>what</b> · <b>when</b>"
 )
 EXAMPLE = (
-    "💡 <b>Examples</b>\n\n"
-    "<code>Ali, fix the login page, Friday</code>\n"
-    "<code>Alige hisobot tayyorlash, ertaga</code>\n"
-    "<code>Всем: обновите статусы до пятницы</code>"
+    "💡 <b>Examples</b>\n"
+    "<i>who — what — when</i>\n\n"
+    "👤 <b>Ali</b> — fix the login page — <b>Friday</b>\n\n"
+    "👤 <b>Aliga</b> — hisobot tayyorlash — <b>ertaga</b>\n\n"
+    "👥 <b>Всем</b> — обновить статусы — <b>до пятницы</b>\n\n"
+    "📷 <b>Photo</b> of a schedule → many tasks"
 )
 HELP = (
-    "<b>New task</b> — who · what · when\n"
-    "<b>Everyone</b> — start with “All”\n"
-    "<b>Many tasks</b> — send a 📷 photo of the schedule\n"
-    "<b>Edit</b> — “Edit last task: high priority”\n"
-    "<b>Delete</b> — “Delete last task”\n"
-    "/today — my tasks"
+    "❔ <b>How to create a task</b>\n\n"
+    "✍️ <b>1. Text</b>\n"
+    "Write who, what, when and send.\n"
+    "<i>Ali — fix login page — Friday</i>\n\n"
+    "🎤 <b>2. Voice</b>\n"
+    "<b>Hold</b> the 🎤 button (bottom right), say who, what, when, then <b>release</b>.\n"
+    "<i>O‘zbek · Русский · English</i>\n\n"
+    "📷 <b>3. Photo</b>\n"
+    "Send a schedule photo → pick names → <b>✅ Create</b>.\n\n"
+    "👥 <b>Everyone</b> — start with “All” or “Hammaga”\n"
+    "✏️ <b>Edit</b> — “Edit last task: high priority”\n"
+    "🗑 <b>Delete</b> — “Delete last task”"
 )
 SCREENS = {"menu": HOME, "example": EXAMPLE, "help": HELP}
 # Buttons and commands from older bot versions still open something sensible.
-SCREEN_ALIASES = {"create": "menu", "voice": "menu", "template": "menu"}
-COMMANDS = {"/start": "menu", "/menu": "menu", "/cancel": "menu", "/create": "menu", "/voice": "menu",
+SCREEN_ALIASES = {"create": "menu", "voice": "help", "template": "menu"}
+COMMANDS = {"/start": "menu", "/menu": "menu", "/cancel": "menu", "/create": "menu", "/voice": "help",
             "/template": "menu", "/example": "example", "/help": "help", "Task yaratish": "menu"}
 
 
@@ -119,22 +129,10 @@ def handle_task_callback(callback):
         return {"method": "answerCallbackQuery", "callback_query_id": callback["id"],
                 "text": "Connect Telegram in your TaskFlow profile first.", "show_alert": True}
     screen = str(callback.get("data", "")).removeprefix("task:")
-    if screen == "cancel":
-        return {"method": "answerCallbackQuery", "callback_query_id": callback["id"], "text": "Cancelled"}
-    schedule_step = re.fullmatch(r"(?:pick:([0-9A-Fa-f]{12}):(\d{1,2}):(\d{1,2}):(\d|s)|sched:([0-9A-Fa-f]{12}))", screen)
-    if schedule_step:
-        try:
-            bot_api("answerCallbackQuery", callback_query_id=callback["id"], timeout=3)
-        except TelegramError:
-            logger.warning("Could not acknowledge Telegram schedule callback")
-        code, item, person, choice, confirm_code = schedule_step.groups()
-        if confirm_code:
-            result = confirm_schedule(integration.user, confirm_code)
-        else:
-            result = choose_person(integration.user, code, int(item), int(person), choice)
-        return schedule_payload(chat["id"], result)
-    known = re.fullmatch(r"(delete|all):[0-9A-Fa-f]{12}", screen) or screen == "today" \
-        or screen in SCREENS or screen in SCREEN_ALIASES
+    step = re.fullmatch(
+        r"cancel(?::([0-9A-Fa-f]{12}))?|(delete|all|sched):([0-9A-Fa-f]{12})"
+        r"|pick:([0-9A-Fa-f]{12}):(\d{1,2}):(\d{1,2}):(\d|s)", screen)
+    known = step or screen == "today" or screen in SCREENS or screen in SCREEN_ALIASES
     if not known:
         return {"method": "answerCallbackQuery", "callback_query_id": callback["id"]}
     # Clear Telegram's loading indicator quickly; the screen itself goes in the webhook response.
@@ -144,21 +142,42 @@ def handle_task_callback(callback):
         logger.warning("Could not acknowledge Telegram callback; replying via webhook response")
     if screen == "today":
         return today_payload(chat["id"], integration.user)
-    if screen in SCREENS or screen in SCREEN_ALIASES:
+    if not step:
         return screen_payload(chat["id"], screen)
-    action, code = screen.split(":", 1)
+    # A confirmation step rewrites the question message itself, so no stale buttons stay behind.
+    return as_edit(confirmation_step(integration.user, chat["id"], step), message.get("message_id"))
+
+
+def as_edit(payload, message_id):
+    if not message_id:
+        return payload
+    payload = {**payload, "method": "editMessageText", "message_id": message_id}
+    payload.setdefault("reply_markup", {"inline_keyboard": []})
+    return payload
+
+
+def confirmation_step(user, chat_id, step):
+    cancel_code, action, code, pick_code, item, person, choice = step.groups()
+    if step.group(0).startswith("cancel"):
+        if cancel_code:
+            cancel_pending(user, cancel_code)
+        return reply(chat_id, "✖️ Cancelled")
+    if pick_code:
+        return schedule_payload(chat_id, choose_person(user, pick_code, int(item), int(person), choice))
+    if action == "sched":
+        return schedule_payload(chat_id, confirm_schedule(user, code))
     try:
         if action == "delete":
-            result = confirm_ai_delete(integration.user, code)
+            result = confirm_ai_delete(user, code)
             if result["status"] == "deleted":
-                return reply(chat["id"], "🗑 Deleted: " + escape(result["task"]["title"]))
-            return reply(chat["id"], "⚠️ " + escape(result["message"]))
-        result = confirm_ai_assign_all(integration.user, code)
+                return reply(chat_id, "🗑 Deleted: " + escape(result["task"]["title"]))
+            return reply(chat_id, "⚠️ " + escape(result["message"]))
+        result = confirm_ai_assign_all(user, code)
     except APIException as exc:
-        return reply(chat["id"], "⚠️ " + escape(str(exc.detail)[:500]))
+        return reply(chat_id, "⚠️ " + escape(str(exc.detail)[:500]))
     if result["status"] != "created":
-        return reply(chat["id"], "⚠️ " + escape(result["message"]))
-    return created_payload(chat["id"], result)
+        return reply(chat_id, "⚠️ " + escape(result["message"]))
+    return created_payload(chat_id, result)
 
 
 def download_file(file_id, max_bytes, label):
@@ -243,7 +262,7 @@ def schedule_payload(chat_id, result):
         return reply(chat_id, text + "\n\nNo one to assign.")
     return reply(chat_id, text, {"inline_keyboard": [[
         {"text": f"✅ Create {count}", "callback_data": f"task:sched:{code}"},
-        {"text": "✖️ Cancel", "callback_data": "task:cancel"},
+        {"text": "✖️ Cancel", "callback_data": f"task:cancel:{code}"},
     ]]})
 
 
@@ -263,12 +282,12 @@ def result_payload(chat_id, result):
                 f"({escape(', '.join(result['departments']))})?")
         return reply(chat_id, text, {"inline_keyboard": [[
             {"text": "✅ Send", "callback_data": f"task:all:{result['confirmation_code']}"},
-            {"text": "✖️ Cancel", "callback_data": "task:cancel"},
+            {"text": "✖️ Cancel", "callback_data": f"task:cancel:{result['confirmation_code']}"},
         ]]})
     if status == "needs_confirmation":
         return reply(chat_id, f"🗑 Delete <b>{escape(result['task']['title'])}</b>?", {"inline_keyboard": [[
             {"text": "🗑 Delete", "callback_data": f"task:delete:{result['confirmation_code']}"},
-            {"text": "✖️ Cancel", "callback_data": "task:cancel"},
+            {"text": "✖️ Cancel", "callback_data": f"task:cancel:{result['confirmation_code']}"},
         ]]})
     return reply(chat_id, "❓ " + escape(result["message"]))
 

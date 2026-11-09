@@ -490,22 +490,26 @@ class TelegramAITaskTests(AITaskFixture, APITestCase):
         self.assertEqual(Task.objects.count(), 1)
         self.extractor.assert_called_once()
 
-    def test_start_shows_short_menu_with_two_buttons(self):
+    def test_start_shows_the_three_ways_and_a_how_to_button(self):
         self.message["text"] = "/start"
         response = self.webhook()
-        self.assertIn("who · what · when", response.data["text"])
+        for way in ("<b>Text</b>", "<b>Voice</b> — hold the mic", "<b>Photo</b>"):
+            self.assertIn(way, response.data["text"])
         buttons = [button["text"] for row in response.data["reply_markup"]["inline_keyboard"] for button in row]
-        self.assertEqual(buttons, ["📅 Today", "💡 Example"])
+        self.assertEqual(buttons, ["📅 Today", "💡 Example", "❔ How to use"])
         self.bot.assert_not_called()
         self.extractor.assert_not_called()
 
     def test_old_buttons_and_commands_still_open_the_menu(self):
-        for data in ("task:create", "task:voice", "task:template", "task:menu"):
+        for data in ("task:create", "task:template", "task:menu"):
             with self.subTest(data=data):
                 response = self.callback(data)
                 self.assertEqual(response.data["method"], "sendMessage")
                 self.assertIn("Tiko", response.data["text"])
-        for command in ("/menu", "/create", "/template", "/voice"):
+        for data in ("task:voice", "task:help"):
+            with self.subTest(data=data):
+                self.assertIn("<b>Hold</b> the 🎤 button", self.callback(data).data["text"])
+        for command in ("/menu", "/create", "/template"):
             with self.subTest(command=command):
                 self.message["text"] = command
                 self.assertIn("Tiko", self.webhook().data["text"])
@@ -622,9 +626,24 @@ class TelegramAITaskTests(AITaskFixture, APITestCase):
         send = asked.data["reply_markup"]["inline_keyboard"][0][0]
         self.assertEqual(send["text"], "✅ Send")
         response = self.callback(send["callback_data"])
+        # The question message is rewritten in place, so its buttons disappear.
+        self.assertEqual(response.data["method"], "editMessageText")
+        self.assertEqual(response.data["message_id"], self.message["message_id"])
         self.assertIn("👥 1 employees · IT", response.data["text"])
         self.assertEqual(Task.objects.get().main_assignee, self.assignee)
-        self.assertEqual(self.callback("task:cancel").data["text"], "Cancelled")
+
+    def test_cancel_removes_buttons_and_send_no_longer_works(self):
+        self.message["text"] = "Hammaga: statuslarni yangilang, 11-noyabr"
+        self.parsed["assignee"] = "all"
+        buttons = self.webhook().data["reply_markup"]["inline_keyboard"][0]
+        cancelled = self.callback(buttons[1]["callback_data"])
+        self.assertEqual(cancelled.data["method"], "editMessageText")
+        self.assertEqual(cancelled.data["text"], "✖️ Cancelled")
+        self.assertEqual(cancelled.data["reply_markup"], {"inline_keyboard": []})
+        self.assertIn("expired", self.callback(buttons[0]["callback_data"]).data["text"])
+        self.assertFalse(Task.objects.exists())
+        # Buttons from before this change carried no code; they still just close the question.
+        self.assertEqual(self.callback("task:cancel").data["text"], "✖️ Cancelled")
 
     @patch("apps.telegram_tasks.download_voice")
     @patch("apps.ai_tasks.transcribe", return_value="Muslima uchun vazifa")

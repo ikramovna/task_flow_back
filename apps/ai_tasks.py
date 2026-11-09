@@ -286,6 +286,19 @@ def ask_assign_all(user, data, transcript):
 
 
 @transaction.atomic
+def cancel_pending(user, code):
+    """Cancel a waiting delete / send-to-all / schedule confirmation so its button no longer works."""
+    pending = AITaskRequest.objects.select_for_update().filter(
+        user=user, result__status="needs_confirmation", result__confirmation_code=code.upper(),
+    ).order_by("-created_at").first()
+    if not pending:
+        return False
+    pending.result = {"status": "cancelled", "message": "Cancelled."}
+    pending.save(update_fields=["result", "updated_at"])
+    return True
+
+
+@transaction.atomic
 def confirm_ai_assign_all(user, code):
     pending = AITaskRequest.objects.select_for_update().filter(
         user=user, result__status="needs_confirmation", result__action="assign_all",
