@@ -11,11 +11,13 @@ from rest_framework import serializers
 from rest_framework.exceptions import APIException
 
 from .ai_provider import extract_event, extract_schedule
-from .ai_tasks import (ALL_REFERENCE, clarify, exact_assignee_matches, is_task_manager, mentions_self,
-                       normalize, team_members)
+from .ai_tasks import (ALL_REFERENCE, assignee_names, clarify, confident_match, exact_assignee_matches,
+                       find_project, is_task_manager, mentions_self, normalize, project_note, resolve_assignee,
+                       similar_assignees, team_members)
 from .models import AITaskRequest, Notification, User
 from .notifications import create_notification
-from .serializers import EventSerializer
+from .serializers import EventSerializer, TaskSerializer
+from .task_creation import save_task
 
 MAX_CHOICES = 8
 PENDING_MINUTES = 30
@@ -38,6 +40,15 @@ def _person(user, name):
         options = sorted(matches, key=lambda person: (person.get_full_name(), person.email))
         return {"name": name, "status": "ambiguous", "candidates": [
             {"id": str(person.pk), "name": person.get_full_name() or person.email} for person in options]}
+    if not matches:
+        # No exact spelling: take one clearly closest employee, or offer the closest ones as buttons.
+        suggestions = similar_assignees(user, name)
+        match = confident_match(suggestions)
+        if match:
+            return {**_ok(match), "name": name}
+        if suggestions:
+            return {"name": name, "status": "ambiguous", "candidates": [
+                {"id": str(person.pk), "name": person.get_full_name() or person.email} for _, person in suggestions]}
     return {"name": name, "status": "unknown"}
 
 
@@ -117,7 +128,7 @@ def build_schedule(*, user, request_key, image_loader, source_identity, note="")
 
 def build_meeting(user, transcript):
     """A meeting asked for by text or voice; the caller stores the receipt."""
-    parsed = extract_event(transcript)
+    parsed = extract_event(transcript, names=assignee_names(user, limit=120))
     if parsed["clarification"] or not parsed["events"]:
         return clarify(parsed["clarification"] or "Please send the meeting with its day, time and people.", transcript)
     item = _item(user, parsed["events"][0], transcript)
@@ -130,6 +141,66 @@ def build_meeting(user, transcript):
     result = _pending_result([item], kind="meeting")
     result["transcript"] = transcript
     return result
+
+
+def build_multi_task(user, data, names, transcript, *, from_voice=False):
+    """One piece of work for 2+ named people: each gets their own task (like "all employees").
+    Created at once when every name is clear; otherwise asked and confirmed like a meeting."""
+    people = _people(user, names, transcript)
+    if from_voice:
+        for index, person in enumerate(people):
+            if person["status"] == "unknown":
+                match = resolve_assignee(user, person["name"], from_voice=True)
+                if match:
+                    people[index] = {**_ok(match), "name": person["name"]}
+    item = {"title": data["title"], "date": data["due_date"].isoformat() if data["due_date"] else None,
+            "time": None, "end_time": None, "location": None, "people": people,
+            "description": data["description"], "priority": data["priority"], "project": data["project"]}
+    if people and all(person["status"] == "ok" for person in people):
+        return create_tasks(user, item)
+    result = _pending_result([item], kind="tasks")
+    result["message"] = (f"Create “{data['title'][:120]}” for {len(people)} people? "
+                         f"Send CONFIRM TASKS {result['confirmation_code']} to create.")
+    result["transcript"] = transcript
+    return result
+
+
+def create_tasks(user, item):
+    """One task per selected person; people outside the departments this user may assign are skipped."""
+    ids = [person["user_id"] for person in item["people"] if person["status"] == "ok"]
+    found = {str(person.pk): person for person in User.objects.filter(is_active=True, pk__in=ids)}
+    projects, tasks, failed = {}, [], 0
+    for uid in dict.fromkeys(ids):
+        assignee = found.get(uid)
+        if not assignee:
+            failed += 1
+            continue
+        if item["project"] and assignee.department_id not in projects:
+            projects[assignee.department_id] = find_project(assignee.department_id, item["project"])
+        project = projects.get(assignee.department_id)
+        serializer = TaskSerializer(data={
+            "title": item["title"], "description": item["description"], "assignees": [assignee.pk],
+            "due_date": item["date"], "priority": item["priority"], "project": str(project.pk) if project else None,
+        }, context={"request": SimpleNamespace(user=user)})
+        try:
+            with transaction.atomic():
+                serializer.is_valid(raise_exception=True)
+                tasks.append((save_task(serializer, user), assignee))
+        except (serializers.ValidationError, APIException):
+            failed += 1
+    if not tasks:
+        return clarify("No task could be created for these people. Check their departments.", "")
+    names = [assignee.get_full_name() or assignee.email for _, assignee in tasks]
+    first = tasks[0][0]
+    return {
+        "status": "created", "action": "multi", "count": len(tasks), "failed": failed,
+        "message": f"Created {len(tasks)} tasks: {first.title}\nAssigned to: {', '.join(names)}",
+        "task": {"id": str(first.pk), "title": first.title, "assignee_name": ", ".join(names),
+                 "due_date": first.due_date.isoformat() if first.due_date else None,
+                 "priority": first.priority, "status": first.status},
+        "task_ids": [str(task.pk) for task, _ in tasks],
+        "project_note": project_note(item["project"], next((p for p in projects.values() if p), None)),
+    }
 
 
 def next_question(result):
@@ -236,6 +307,11 @@ def confirm_schedule(user, code):
     result = pending.result
     if next_question(result):
         return result
+    if result.get("kind") == "tasks":
+        done = create_tasks(user, result["items"][0])
+        pending.result = done
+        pending.save(update_fields=["result", "updated_at"])
+        return done
     ids = {person["user_id"] for item in result["items"] for person in item["people"] if person["status"] == "ok"}
     people = {str(person.pk): person for person in User.objects.filter(is_active=True, pk__in=ids)}
     created, failed, invited = [], 0, 0

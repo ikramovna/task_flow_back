@@ -47,6 +47,7 @@ class ExtractedTaskSerializer(serializers.Serializer):
     title = serializers.CharField(max_length=220)
     description = serializers.CharField(max_length=6000, allow_blank=True)
     assignee = serializers.CharField(max_length=254, allow_blank=True)
+    assignees = serializers.ListField(child=serializers.CharField(max_length=254), required=False, default=list)
     project = serializers.CharField(max_length=220, allow_null=True)
     due_date = serializers.DateField(allow_null=True)
     priority = serializers.ChoiceField(choices=("low", "medium", "high"))
@@ -79,7 +80,7 @@ ALL_REFERENCE = re.compile(
 ALL_ASSIGNEE_NAMES = {"all", "all employees", "all employee", "all staff", "everyone", "everybody",
                       "hammaga", "barchaga", "barcha xodimlar", "всем", "все сотрудники"}
 MAX_ALL_ASSIGNEES = 200
-EVENT_CONFIRMATION = re.compile(r"^confirm event ([0-9a-f]{12})$", re.IGNORECASE)
+EVENT_CONFIRMATION = re.compile(r"^confirm (?:event|tasks) ([0-9a-f]{12})$", re.IGNORECASE)
 # normalize() drops apostrophes: yig'ilish -> yigilish.
 MEETING_WORDS = re.compile(
     r"(?<!\w)(meeting\w*|meetup|uchrashuv\w*|yigilish\w*|majlis\w*|"
@@ -220,6 +221,63 @@ def suggest_assignees(user, spoken_name, *, limit=3):
     return [name for _, name in scored[:limit]]
 
 
+AFFECTIONATE_ENDINGS = ("jon", "xon", "hon", "bek", "oy", "ga", "ni", "ning", "dan")
+
+
+def sound_key(word):
+    """One spelling for common Uzbek/Russian Latin variants: x/kh/h, q/k, doubled letters, ts/s."""
+    word = normalize_person(word)
+    for old, new in (("kh", "h"), ("x", "h"), ("q", "k"), ("ts", "s"), ("w", "v"), ("yu", "u"), ("ya", "a")):
+        word = word.replace(old, new)
+    return re.sub(r"(.)\1+", r"\1", word)
+
+
+def word_keys(word):
+    """A name word and its forms without an affectionate or case ending (Sardorbek -> sardor)."""
+    key = sound_key(word)
+    keys = {key}
+    for ending in AFFECTIONATE_ENDINGS:
+        if key.endswith(sound_key(ending)) and len(key) - len(ending) >= 3:
+            keys.add(key[:-len(sound_key(ending))])
+    return keys
+
+
+def _word_score(said, stored):
+    return max(SequenceMatcher(None, a, b).ratio() for a in word_keys(said) for b in word_keys(stored))
+
+
+def similar_assignees(user, name, *, limit=5, threshold=0.8):
+    """Closest employees for a name that matched nobody exactly, best first, as (score, person)."""
+    words = [word for word in normalize_person(name).split() if word]
+    if not words:
+        return []
+    scored = []
+    for person in available_assignees(user):
+        first, last = normalize_person(person.first_name), normalize_person(person.last_name)
+        stored = [word for word in (first, last) if word]
+        if not stored:
+            continue
+        if len(words) == 1:
+            score = max(_word_score(words[0], word) for word in stored)
+        else:
+            pairs = [(words[0], first, words[-1], last), (words[0], last, words[-1], first)]
+            score = max((_word_score(a, b) + _word_score(c, d)) / 2 for a, b, c, d in pairs if b and d) \
+                if first and last else max(_word_score(word, stored[0]) for word in words)
+        if score >= threshold:
+            scored.append((score, person))
+    scored.sort(key=lambda item: (-item[0], item[1].get_full_name(), item[1].email))
+    return scored[:limit]
+
+
+def confident_match(suggestions):
+    """One clearly best spelling (a typo or an ending), safe to use without asking."""
+    if not suggestions:
+        return None
+    best_score, best = suggestions[0]
+    runner_up = suggestions[1][0] if len(suggestions) > 1 else 0
+    return best if best_score >= 0.9 and runner_up < 0.82 else None
+
+
 def available_assignees(user):
     candidates = User.objects.filter(is_active=True, department__isnull=False).select_related("department")
     if not (user.is_superuser or user.role in PRIVILEGED_TASK_ROLES or user.has_all_departments_access):
@@ -345,9 +403,7 @@ def confirm_ai_assign_all(user, code):
     tasks = []
     for member in members:
         if data["project"] and member.department_id not in projects:
-            matches = [item for item in Project.objects.filter(department=member.department_id)
-                       .exclude(status=Project.Status.ARCHIVED) if normalize(item.name) == normalize(data["project"])]
-            projects[member.department_id] = matches[0] if len(matches) == 1 else None
+            projects[member.department_id] = find_project(member.department_id, data["project"])
         project = projects.get(member.department_id)
         serializer = TaskSerializer(data={
             "title": data["title"], "description": data["description"], "assignees": [member.pk],
@@ -380,10 +436,14 @@ def resolve_assignee(user, name, *, from_voice=False):
     matches = exact_assignee_matches(user, name, candidates=candidates)
     if len(matches) == 1:
         return matches[0]
-    if matches or not from_voice:
+    if matches:
         return None
-    near_matches = nearby_assignees(candidates, name)
-    return next(iter(near_matches.values())) if len(near_matches) == 1 else None
+    if from_voice:
+        near_matches = nearby_assignees(candidates, name)
+        if len(near_matches) == 1:
+            return next(iter(near_matches.values()))
+    # A typo or an ending ("Muslma", "Sardorbek") with one clearly closest employee.
+    return confident_match(similar_assignees(user, name))
 
 
 def pending_task_data(data):
@@ -422,7 +482,7 @@ def ask_for_assignee(data, transcript):
 
 
 def build_task(user, transcript, *, from_voice=False):
-    parsed = extract_task(transcript)
+    parsed = extract_task(transcript, names=assignee_names(user, limit=120))
     if parsed.get("clarification"):
         return clarify(parsed["clarification"][:1000], transcript)
     extracted = ExtractedTaskSerializer(data=parsed)
@@ -431,8 +491,13 @@ def build_task(user, transcript, *, from_voice=False):
     data = extracted.validated_data
     if data["due_date"] and data["due_date"] < timezone.localdate():
         return clarify("The deadline is in the past. Please resend the complete task with a future date, including the year.", transcript)
+    keep_tag_in_title(user, data, transcript)
     if is_all_assignee(data["assignee"], transcript):
         return ask_assign_all(user, data, transcript)
+    names = [name for name in data.get("assignees") or [] if name.strip()]
+    if len(names) > 1:
+        from .ai_schedule import build_multi_task  # imports this module
+        return build_multi_task(user, data, names, transcript, from_voice=from_voice)
     if not data["assignee"].strip() or (data["assignee"] == "self" and not mentions_self(transcript)):
         data["assignee"] = ""
         return ask_for_assignee(data, transcript)
@@ -441,6 +506,10 @@ def build_task(user, transcript, *, from_voice=False):
         exact = exact_assignee_matches(user, data["assignee"])
         if len(exact) > 1:
             return ask_which_assignee(data, exact, transcript)
+        if similar_assignees(user, data["assignee"]):
+            # Offer the closest employees as buttons instead of asking to type it again.
+            from .ai_schedule import build_multi_task  # imports this module
+            return build_multi_task(user, data, [data["assignee"]], transcript, from_voice=from_voice)
         suggestions = suggest_assignees(user, data["assignee"]) if from_voice else []
         hint = f" Possible matches: {', '.join(suggestions)}." if suggestions else ""
         return clarify(f"The assignee was read as '{data['assignee'][:120]}' but could not be uniquely identified."
@@ -448,14 +517,56 @@ def build_task(user, transcript, *, from_voice=False):
     return finish_task(user, data, assignee, transcript)
 
 
+def project_key(value):
+    return re.sub(r"[\W_]+", "", normalize(value or ""))
+
+
+def find_project(department_id, name):
+    """The department's active project for a spoken/typed name ("CRM360" = "CRM 360"), or None."""
+    key = project_key(name)
+    if not key:
+        return None
+    projects = list(Project.objects.filter(department_id=department_id).exclude(status=Project.Status.ARCHIVED))
+    for test in (lambda stored: stored == key, lambda stored: key in stored or stored in key):
+        matches = [project for project in projects if project_key(project.name) and test(project_key(project.name))]
+        if len(matches) == 1:
+            return matches[0]
+        if matches:
+            return None
+    scored = sorted(((SequenceMatcher(None, key, project_key(project.name)).ratio(), project) for project in projects),
+                    key=lambda item: -item[0])
+    if scored and scored[0][0] >= 0.85 and (len(scored) == 1 or scored[1][0] < 0.85):
+        return scored[0][1]
+    return None
+
+
+PROJECT_WORDS = re.compile(r"(?<!\w)(project\w*|loyiha\w*|проект\w*)(?!\w)", re.IGNORECASE)
+
+
+def keep_tag_in_title(user, data, transcript):
+    """'CRM360: Develop META Section' — a tag that is not a real project stays part of the title."""
+    name = data.get("project")
+    if not name or PROJECT_WORDS.search(transcript or ""):
+        return
+    department_ids = set(user.accessible_departments.values_list("pk", flat=True))
+    if user.department_id:
+        department_ids.add(user.department_id)
+    if any(find_project(department_id, name) for department_id in department_ids):
+        return  # a real project of the requester's departments: link it
+    if project_key(name) not in project_key(data["title"]):
+        data["title"] = f"{name}: {data['title']}"[:220]
+    data["project"] = None
+
+
+def project_note(name, project):
+    if not name:
+        return None
+    return f"📁 {project.name}" if project else f"📁 “{name[:80]}” not found — created without a project"
+
+
 def finish_task(user, data, assignee, transcript):
-    project = None
-    if data["project"]:
-        projects = Project.objects.filter(department=assignee.department).exclude(status=Project.Status.ARCHIVED)
-        matches = [item for item in projects if normalize(item.name) == normalize(data["project"])]
-        if len(matches) != 1:
-            return clarify("The project could not be uniquely identified. Please resend the complete task with the exact project name.", transcript)
-        project = matches[0]
+    # An unknown project never blocks the task: it is created without one and the reply says so.
+    project = find_project(assignee.department_id, data["project"]) if data["project"] else None
     serializer = TaskSerializer(data={
         "title": data["title"], "description": data["description"],
         "assignees": [assignee.pk], "due_date": data["due_date"],
@@ -475,6 +586,7 @@ def finish_task(user, data, assignee, transcript):
             "due_date": task.due_date.isoformat() if task.due_date else None,
             "priority": task.priority, "status": task.status,
         },
+        "project_note": project_note(data["project"], project),
     }
 
 
@@ -572,11 +684,10 @@ def build_task_change(user, transcript, intent, *, from_voice=False):
         changes["assignees"] = [assignee.pk]
     if parsed["project"]:
         department = assignee.department if "assignees" in changes else task.department
-        projects = Project.objects.filter(department=department).exclude(status=Project.Status.ARCHIVED)
-        matches = [project for project in projects if normalize(project.name) == normalize(parsed["project"])]
-        if len(matches) != 1:
+        project = find_project(department.pk if department else None, parsed["project"])
+        if not project:
             return clarify("The new project could not be uniquely identified. Use its exact name.", transcript)
-        changes["project"] = matches[0].pk
+        changes["project"] = project.pk
     if not changes:
         return clarify("Say what to change in that task, such as its title, deadline, or priority.", transcript)
     if "status" in changes and changes["status"] != task.status and task.main_assignee_id != user.pk:

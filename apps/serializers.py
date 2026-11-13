@@ -3,11 +3,13 @@ from django.urls import reverse
 from django.db.models import Avg
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
+from drf_spectacular.utils import extend_schema_field, inline_serializer
 from rest_framework import serializers
 from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.serializers import TokenRefreshSerializer
 
-from .models import Conversation, ConversationParticipant, Department, Event, Message, Notification, Project, Report, Task, TaskAttachment, User, UserPreference
+from .models import Conversation, ConversationParticipant, Department, Event, Message, Notification, Project, Report, Task, TaskAttachment, TelegramIntegration, User, UserPreference
+from .task_visibility import PRIVILEGED_TASK_ROLES
 
 
 class SafeTokenRefreshSerializer(TokenRefreshSerializer):
@@ -72,10 +74,11 @@ class MemberSerializer(serializers.ModelSerializer):
     efficiency = serializers.SerializerMethodField()
     completed_tasks = serializers.SerializerMethodField()
     in_progress_tasks = serializers.SerializerMethodField()
+    telegram = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ("id", "email", "username", "password", "first_name", "last_name", "full_name", "avatar", "phone", "job_title", "department", "role", "is_active", "date_joined", "efficiency", "completed_tasks", "in_progress_tasks")
+        fields = ("id", "email", "username", "password", "first_name", "last_name", "full_name", "avatar", "phone", "job_title", "department", "role", "is_active", "date_joined", "efficiency", "completed_tasks", "in_progress_tasks", "telegram")
         read_only_fields = ("date_joined",)
 
     def validate_department(self, value):
@@ -113,6 +116,28 @@ class MemberSerializer(serializers.ModelSerializer):
 
     def get_in_progress_tasks(self, obj) -> int:
         return getattr(obj, "in_progress_task_count", 0)
+
+    @extend_schema_field(inline_serializer("MemberTelegramStatus", {
+        "connected": serializers.BooleanField(),
+        "username": serializers.CharField(allow_blank=True),
+        "connected_at": serializers.DateTimeField(allow_null=True),
+    }))
+    def get_telegram(self, obj):
+        """Telegram bot connection for the staff list; the @username only for managers and the person."""
+        try:
+            integration = obj.telegram_integration
+        except TelegramIntegration.DoesNotExist:
+            integration = None
+        connected = bool(integration and integration.is_connected)
+        request = self.context.get("request")
+        viewer = getattr(request, "user", None)
+        may_see_username = bool(viewer and (viewer.is_superuser or viewer.pk == obj.pk
+                                            or getattr(viewer, "role", None) in PRIVILEGED_TASK_ROLES))
+        return {
+            "connected": connected,
+            "username": integration.telegram_username if connected and may_see_username else "",
+            "connected_at": integration.connected_at if connected else None,
+        }
 
 
 class ProjectBriefSerializer(serializers.ModelSerializer):

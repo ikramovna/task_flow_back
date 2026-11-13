@@ -163,7 +163,7 @@ class MemberViewSet(DepartmentScopedMixin, viewsets.ModelViewSet):
         task_visibility = Q()
         if not self.request.user.is_superuser and self.request.user.role not in PRIVILEGED_TASK_ROLES:
             task_visibility = Q(assigned_tasks__is_hidden=False) | Q(assigned_tasks__assignees=self.request.user)
-        qs = User.objects.select_related("department").annotate(
+        qs = User.objects.select_related("department", "telegram_integration").annotate(
             task_count=Count(
                 "assigned_tasks",
                 filter=Q(assigned_tasks__department_id=F("department_id")) & task_visibility,

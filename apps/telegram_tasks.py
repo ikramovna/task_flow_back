@@ -107,19 +107,27 @@ def created_html(result):
     task = result["task"]
     if result.get("action") == "assign_all":
         who = f"👥 {result['count']} employees · {', '.join(result.get('departments', []))}"
+    elif result.get("action") == "multi":
+        who = f"👥 {task['assignee_name']}"
     else:
         who = f"👤 {task['assignee_name']}"
     details = [who, f"📅 {task['due_date'] or 'No deadline'}"]
     if task["priority"] != "medium":
         details.append(f"⚡ {task['priority'].title()}")
     text = f"✅ <b>{escape(task['title'])}</b>\n" + escape(" · ".join(details))
+    if result.get("action") == "multi":
+        text += f"\n<i>{result['count']} tasks — one each</i>"
+        if result.get("failed"):
+            text += f"\n⚠️ {result['failed']} not created (outside your departments)."
+    if result.get("project_note"):
+        text += f"\n{escape(result['project_note'])}"
     if result.get("heard"):
         text += f"\n🎤 <i>{escape(result['heard'][:300])}</i>"
     return text
 
 
 def created_payload(chat_id, result):
-    url = tasks_url() if result.get("action") == "assign_all" else task_url(result["task"]["id"])
+    url = tasks_url() if result.get("action") in {"assign_all", "multi"} else task_url(result["task"]["id"])
     return reply(chat_id, created_html(result), {"inline_keyboard": [[{"text": "Open", "url": url}]]})
 
 
@@ -234,7 +242,7 @@ def message_image(message):
 
 
 def _day(item):
-    return f"{item['date'][8:]}.{item['date'][5:7]}"
+    return f"{item['date'][8:]}.{item['date'][5:7]}" if item.get("date") else "No deadline"
 
 
 def _who(item, limit=5):
@@ -248,6 +256,8 @@ def _who(item, limit=5):
 
 def schedule_payload(chat_id, result):
     """Calendar events from a photo or a meeting request: ask names, preview, add."""
+    if result["status"] == "created" and result.get("action") == "multi":
+        return created_payload(chat_id, result)
     if result["status"] == "created":
         if result.get("event"):
             text = f"✅ <b>{escape(result['event']['title'])}</b>\n📅 {escape(result['event']['when'])}"
@@ -271,7 +281,15 @@ def schedule_payload(chat_id, result):
         text = f"👤 Which <b>{escape(person['name'])}</b>?\n<i>{escape(item['title'])} · {_day(item)}</i>"
         return reply(chat_id, text, {"inline_keyboard": buttons})
     items = result["items"]
-    if len(items) == 1:
+    if result.get("kind") == "tasks":
+        item = items[0]
+        count = sum(person["status"] == "ok" for person in item["people"])
+        lines = [f"📌 <b>{escape(item['title'])}</b>", f"📅 {_day(item)}",
+                 f"👥 {escape(_who(item, limit=8) or 'No one selected')}"]
+        if result.get("heard"):
+            lines.append(f"🎤 <i>{escape(result['heard'][:300])}</i>")
+        text, label = "\n".join(lines), f"✅ Create {count} task{'s' if count != 1 else ''}"
+    elif len(items) == 1:
         item = items[0]
         clock = item["time"] + (f"–{item['end_time']}" if item["end_time"] else "") if item["time"] else ""
         lines = [f"📅 <b>{escape(item['title'])}</b>", f"🕑 {_day(item)} {clock}".rstrip()]
